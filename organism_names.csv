@@ -1,0 +1,171 @@
+organism_name_old,organism_name,genus
+cedecea davisae,cedecea davisae,cedecea
+_cedecea lapagei,cedecea lapagei,cedecea
+cedecea,cedecea species,cedecea
+cedecea species,cedecea species,cedecea
+citrobacter amalonaticus,citrobacter amalonaticus,citrobacter
+citrobacter amalonaticus group,citrobacter amalonaticus,citrobacter
+_citrobacter farmeri,citrobacter farmeri,citrobacter
+citrobacter farmeri,citrobacter farmeri,citrobacter
+_citrobacter braakii/freundii/sedlakii,citrobacter freundii complex,citrobacter
+_citrobacter freundii,citrobacter freundii complex,citrobacter
+_citrobacter sedlakii,citrobacter freundii complex,citrobacter
+_citrobacter youngae,citrobacter freundii complex,citrobacter
+citrobacter braakii,citrobacter freundii complex,citrobacter
+citrobacter freundii,citrobacter freundii complex,citrobacter
+citrobacter freundii complex,citrobacter freundii complex,citrobacter
+citrobacter freundii/wermkanii,citrobacter freundii complex,citrobacter
+citrobacter werkmanii/youngae,citrobacter freundii complex,citrobacter
+citrobacter youngae,citrobacter freundii complex,citrobacter
+_citrobacter diversus (koseri),citrobacter koseri,citrobacter
+_citrobacter koserii (diversus),citrobacter koseri,citrobacter
+citrobacter koseri,citrobacter koseri,citrobacter
+citrobacter koserii (diversus),citrobacter koseri,citrobacter
+citrobacter murliniae,citrobacter murliniae,citrobacter
+_carbapenem resistant citrobacter species,citrobacter species,citrobacter
+citrobacter,citrobacter species,citrobacter
+citrobacter species,citrobacter species,citrobacter
+cronobacter (enterobacter) species,cronobacter (enterobacter) species,cronobacter
+_cronobacter sakazakii group,cronobacter sakazakii group,cronobacter
+cronobacter (enterobacter) sakazakii,cronobacter sakazakii group,cronobacter
+edwardsiella species,edwardsiella species,edwardsiella
+edwardsiella tarda,edwardsiella tarda,edwardsiella
+_enterobacter aerogenes,enterobacter (klebsiella) aerogenes,enterobacter
+carbapenem resistant enterobacter (klebsiella)  aerogenes,enterobacter (klebsiella) aerogenes,enterobacter
+enterobacter (klebsiella) aerogenes,enterobacter (klebsiella) aerogenes,enterobacter
+enterobacter aerogenes,enterobacter (klebsiella) aerogenes,enterobacter
+_enterobacter amnigenus biogroup 1,enterobacter amnigenus,enterobacter
+enterobacter amnigenus,enterobacter amnigenus,enterobacter
+_enterobacter cancerogenus,enterobacter cancerogenus,enterobacter
+enterobacter cancerogenus,enterobacter cancerogenus,enterobacter
+_enterobacter asburiae,enterobacter cloacae complex,enterobacter
+_enterobacter cloacae,enterobacter cloacae complex,enterobacter
+_enterobacter cloacae/asburiae group,enterobacter cloacae complex,enterobacter
+carbapenem resistant enterobacter cloacae complex,enterobacter cloacae complex,enterobacter
+enterobacter asburiae,enterobacter cloacae complex,enterobacter
+enterobacter cloacae,enterobacter cloacae complex,enterobacter
+enterobacter cloacae complex,enterobacter cloacae complex,enterobacter
+enterobacter cloacae/ asburiae group,enterobacter cloacae complex,enterobacter
+enterobacter cloacae/absuriae ,enterobacter cloacae complex,enterobacter
+enterobacter cloacae/asburiae,enterobacter cloacae complex,enterobacter
+enterobacter cloacae/asburiae group,enterobacter cloacae complex,enterobacter
+enterobacter kobei,enterobacter cloacae complex,enterobacter
+probable enterobacter cloacae,enterobacter cloacae complex,enterobacter
+enterobacter gergoviae,enterobacter gergoviae,enterobacter
+_enterobacter species,enterobacter species,enterobacter
+carbapenem resistant enterbacter genus,enterobacter species,enterobacter
+carbapenem resistant enterobacter species,enterobacter species,enterobacter
+enterobacter species,enterobacter species,enterobacter
+probable enterobacter species,enterobacter species,enterobacter
+enterobacter taylorae,enterobacter taylorae,enterobacter
+enterobacter-klebsiella group,enterobacter-klebsiella group,enterobacter-klebsiella
+probable enterobacter-klebsiella group,enterobacter-klebsiella group,enterobacter-klebsiella
+_e. coli  possible esbl producer,escherichia coli,escherichia
+"_escherichia coli,  esbl producer",escherichia coli,escherichia
+carbapenem resistant e. coli,escherichia coli,escherichia
+e. coli,escherichia coli,escherichia
+e.coli,escherichia coli,escherichia
+escherichia coli,escherichia coli,escherichia
+probable escherichia coli,escherichia coli,escherichia
+escherichia fergusonii,escherichia fergusonii,escherichia
+escherichia hermanii,escherichia hermannii,escherichia
+escherichia hermannii,escherichia hermannii,escherichia
+escherichia,escherichia species,escherichia
+escherichia sp.,escherichia species,escherichia
+_escherichia vulneris,escherichia vulneris,escherichia
+escherichia vulneris,escherichia vulneris,escherichia
+ewingella americana,ewingella americana,ewingella
+carbapenem resistant enterobacteriaceae,family enterobacteriaceae,
+"gram negative rod, family enterobacteriaceae",family enterobacteriaceae,
+_hafnia alvei,hafnia alvei,hafnia
+hafnia alvei,hafnia alvei,hafnia
+hafnia species,hafnia species,hafnia
+_kleb. oxytoca  esbl producer,klebsiella oxytoca,klebsiella
+_klebsiella oxytoca,klebsiella oxytoca,klebsiella
+carbapenem resistant klebsiella oxytoca,klebsiella oxytoca,klebsiella
+klebsiella oxytoca,klebsiella oxytoca,klebsiella
+klebsiella ozaenae,klebsiella ozaenae,klebsiella
+"_kleb. pneumoniae, esbl producer",klebsiella pneumoniae,klebsiella
+_klebsiella pneumoniae,klebsiella pneumoniae,klebsiella
+_klebsiella pneumoniae ssp pneumoniae,klebsiella pneumoniae,klebsiella
+_klebsiella pneumoniae subsp ozaenae,klebsiella pneumoniae,klebsiella
+_klebsiella pneumoniae subsp pneumoniae,klebsiella pneumoniae,klebsiella
+carbapenem resistant klebsiella pneumoniae,klebsiella pneumoniae,klebsiella
+klebsiella pneumoniae,klebsiella pneumoniae,klebsiella
+klebsiella pneumonie,klebsiella pneumoniae,klebsiella
+probable klebsiella pneumoniae,klebsiella pneumoniae,klebsiella
+klebsiella rhinoscleromatis,klebsiella rhinoscleromatis,klebsiella
+"_klebsiella sp.,  esbl producer",klebsiella species,klebsiella
+_klebsiella species,klebsiella species,klebsiella
+carbapenem resistant klebsiella sp.,klebsiella species,klebsiella
+klebsiella genus,klebsiella species,klebsiella
+klebsiella species,klebsiella species,klebsiella
+probable klebsiella species,klebsiella species,klebsiella
+_kluyvera ascorbata,kluyvera ascorbata,kluyvera
+kluyvera ascorbata,kluyvera ascorbata,kluyvera
+kluyvera cryocrescens,kluyvera cryocrescens,kluyvera
+kluyvera intermedia,kluyvera intermedia,kluyvera
+kluyvera species,kluyvera species,kluyvera
+leclercia adecarboxylata,leclercia adecarboxylata,leclercia
+_carbapenem resistant morganella morganii,morganella morganii,morganella
+_morganella morganii,morganella morganii,morganella
+_morganella morganii ssp morganii,morganella morganii,morganella
+_pantoea agglomerans,morganella morganii,morganella
+morganella morganii,morganella morganii,morganella
+morganella species,morganella species,morganella
+pantoea (enterobacter) agglomerans,pantoea (enterobacter) agglomerans,pantoea
+pantoea dispersa,pantoea dispersa,pantoea
+pantoea,pantoea species,pantoea
+pantoea species,pantoea species,pantoea
+_proteus mirabilis,proteus mirabilis,proteus
+"_proteus mirabilis, possible  esbl producer",proteus mirabilis,proteus
+probable proteus mirabilis,proteus mirabilis,proteus
+proteus mirabilis,proteus mirabilis,proteus
+_proteus species,proteus species,proteus
+probable proteus species,proteus species,proteus
+proteus species,proteus species,proteus
+_proteus vulgaris group/proteus,proteus vulgaris-penneri group,proteus
+_proteus vulgaris group/proteus penneri,proteus vulgaris-penneri group,proteus
+"_proteus vulgaris/proteus penneri, possible esbl producer",proteus vulgaris-penneri group,proteus
+proteus penneri,proteus vulgaris-penneri group,proteus
+proteus vulgaris,proteus vulgaris-penneri group,proteus
+proteus vulgaris group/proteus penneri,proteus vulgaris-penneri group,proteus
+proteus vulgaris/penneri group,proteus vulgaris-penneri group,proteus
+providencia alcalifaciens,providencia alcalifaciens,providencia
+_providencia rettgeri,providencia rettgeri,providencia
+providencia rettgeri,providencia rettgeri,providencia
+_providencia species,providencia species,providencia
+providencia species,providencia species,providencia
+providencia stuartii,providencia stuartii,providencia
+_raoultella ornithinolytica,raoultella ornithinolytica,raoultella
+raoultella ornithinolytica,raoultella ornithinolytica,raoultella
+raoultella planticola,raoultella planticola,raoultella
+salmonella derby,salmonella derby,salmonella
+salmonella enterica,salmonella enterica,salmonella
+salmonella enteritidis,salmonella enteritidis,salmonella
+salmonella javiana,salmonella javiana,salmonella
+salmonella newport,salmonella newport,salmonella
+_salmonella species,salmonella species,salmonella
+probable salmonella species,salmonella species,salmonella
+salmonella group,salmonella species,salmonella
+salmonella species,salmonella species,salmonella
+salmonella typhi,salmonella typhi,salmonella
+_serratia ficaria,serratia ficaria,serratia
+serratia fonticola,serratia fonticola,serratia
+_serratia liquefaciens,serratia liquefaciens complex,serratia
+serratia liquefaciens,serratia liquefaciens complex,serratia
+serratia liquefaciens complex,serratia liquefaciens complex,serratia
+serratia liquefaciens group,serratia liquefaciens complex,serratia
+_serratia marcescens,serratia marcescens,serratia
+probable serratia marcescens,serratia marcescens,serratia
+serratia marcescens,serratia marcescens,serratia
+serratia odorifera,serratia odorifera,serratia
+_serratia plymuthica,serratia plymuthica,serratia
+serratia plymuthica,serratia plymuthica,serratia
+serratia rubidaea,serratia rubidaea,serratia
+_serratia species,serratia species,serratia
+serratia species,serratia species,serratia
+shigella flexneri,shigella flexneri,shigella
+shigella sonnei,shigella sonnei,shigella
+shigella sonnei (group d),shigella sonnei,shigella
+shigella species,shigella species,shigella

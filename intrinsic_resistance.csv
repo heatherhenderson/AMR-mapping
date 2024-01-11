@@ -1,0 +1,123 @@
+antibiotic,organism_name
+amoxicillin clavulanate,citrobacter freundii complex
+amoxicillin clavulanate,enterobacter (klebsiella) aerogenes
+amoxicillin clavulanate,enterobacter cloacae complex
+amoxicillin clavulanate,hafnia alvei
+amoxicillin clavulanate,morganella morganii
+amoxicillin clavulanate,providencia rettgeri
+amoxicillin clavulanate,providencia stuartii
+amoxicillin clavulanate,serratia marcescens
+ampicillin,citrobacter amalonaticus
+ampicillin,citrobacter freundii complex
+ampicillin,citrobacter koseri
+ampicillin,citrobacter species
+ampicillin,enterobacter (klebsiella) aerogenes
+ampicillin,enterobacter cloacae complex
+ampicillin,enterobacter species
+ampicillin,enterobacter-klebsiella group
+ampicillin,escherichia hermannii
+ampicillin,hafnia alvei
+ampicillin,klebsiella genus
+ampicillin,klebsiella oxytoca
+ampicillin,klebsiella ozaenae
+ampicillin,klebsiella pneumoniae
+ampicillin,klebsiella species
+ampicillin,morganella morganii
+ampicillin,pantoea (enterobacter) agglomerans
+ampicillin,proteus vulgaris-penneri group
+ampicillin,providencia rettgeri
+ampicillin,providencia stuartii
+ampicillin,serratia marcescens
+ampicillin sulbactam,citrobacter freundii complex
+ampicillin sulbactam,citrobacter koseri
+ampicillin sulbactam,citrobacter species
+ampicillin sulbactam,enterobacter (klebsiella) aerogenes
+ampicillin sulbactam,enterobacter cloacae complex
+ampicillin sulbactam,enterobacter species
+ampicillin sulbactam,hafnia alvei
+ampicillin sulbactam,morganella morganii
+ampicillin sulbactam,providencia rettgeri
+ampicillin sulbactam,providencia stuartii
+ampicillin sulbactam,serratia marcescens
+cefazolin,citrobacter amalonaticus
+cefazolin,citrobacter freundii complex
+cefazolin,citrobacter species
+cefazolin,enterobacter (klebsiella) aerogenes
+cefazolin,enterobacter cloacae complex
+cefazolin,enterobacter species
+cefazolin,hafnia alvei
+cefazolin,morganella morganii
+cefazolin,proteus vulgaris-penneri group
+cefazolin,providencia rettgeri
+cefazolin,providencia stuartii
+cefazolin,serratia marcescens
+cefoxitin,citrobacter freundii complex
+cefoxitin,citrobacter species
+cefoxitin,enterobacter (klebsiella) aerogenes
+cefoxitin,enterobacter cloacae complex
+cefoxitin,enterobacter species
+cefoxitin,hafnia alvei
+cefoxitin,morganella morganii
+cefoxitin,serratia marcescens
+cefotaxime,enterobacter (klebsiella) aerogenes
+cefotaxime,enterobacter cloacae complex
+cefotaxime,enterobacter species
+cefuroxime,citrobacter freundii complex
+cefuroxime,enterobacter (klebsiella) aerogenes
+cefuroxime,enterobacter cloacae complex
+cefuroxime,morganella morganii
+cefuroxime,proteus vulgaris-penneri group
+cefuroxime,serratia marcescens
+colistin,morganella morganii
+colistin,proteus mirabilis
+colistin,proteus species
+colistin,proteus vulgaris-penneri group
+colistin,providencia rettgeri
+colistin,providencia stuartii
+colistin,serratia ficaria
+colistin,serratia fonticola
+colistin,serratia liquefaciens complex
+colistin,serratia marcescens
+colistin,serratia marcescens
+colistin,serratia odorifera
+colistin,serratia plymuthica
+colistin,serratia rubidaea
+colistin,serratia species
+doxycycline,morganella morganii
+doxycycline,proteus vulgaris-penneri group
+doxycycline,providencia rettgeri
+doxycycline,providencia stuartii
+gentamicin,providencia rettgeri
+gentamicin,providencia stuartii
+imipenem,morganella morganii
+imipenem,morganella species
+imipenem,proteus mirabilis
+imipenem,proteus species
+imipenem,proteus vulgaris-penneri group
+imipenem,providencia alcalifaciens
+imipenem,providencia rettgeri
+imipenem,providencia species
+imipenem,providencia stuartii
+nitrofurantoin,morganella morganii
+nitrofurantoin,proteus mirabilis
+nitrofurantoin,proteus species
+nitrofurantoin,proteus vulgaris-penneri group
+nitrofurantoin,providencia rettgeri
+nitrofurantoin,providencia stuartii
+nitrofurantoin,serratia marcescens
+piperacillin,escherichia coli
+piperacillin tazobactam,escherichia hermannii
+tetracycline,morganella morganii
+tetracycline,proteus mirabilis
+tetracycline,proteus vulgaris-penneri group
+tetracycline,providencia rettgeri
+tetracycline,providencia stuartii
+tetracycline,serratia marcescens
+ticarcillin clavulanic acid,escherichia hermannii
+tigecycline,morganella morganii
+tigecycline,proteus mirabilis
+tigecycline,proteus vulgaris-penneri group
+tigecycline,providencia rettgeri
+tigecycline,providencia stuartii
+tobramycin,providencia rettgeri
+tobramycin,providencia stuartii
