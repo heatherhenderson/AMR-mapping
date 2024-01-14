@@ -1,0 +1,242 @@
+---
+title: "Enterobacterales isolates 2014-2020"
+format: html
+self-contained: true
+date: "2022-09-13"
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(warning = FALSE, message = FALSE, error = FALSE, eval = TRUE, tidy = TRUE, cache = FALSE)
+```
+
+```{r libraries}
+packages <- function(x){
+  for(i in x){
+     if(!require(i, character.only = TRUE)){
+      install.packages(i, dependencies = TRUE)
+       library(i, character.only = TRUE)
+    }
+  }
+}
+packages(c("haven", "readxl", "tidyverse" , "data.table" , "naniar", "rockchalk", "lubridate", "kableExtra", "DT", "formatR", "zoo", "binom", "plotly", "janitor", "sjlabelled", "Hmisc", "rms", "aod", "sandwich", "lmtest", "tableone", "broom", "investr"))
+```
+
+```{r}
+options(scipen=999)
+setwd("C:/Users/henderh/Desktop/amr_proj")
+cultures_2014_2018 <- fread("Z:/Enterobacterales_HIV_data/18_3438 patient location corrected.csv")
+cultures_2019_2021 <- read_delim("Z:/Enterobacterales_HIV_data/Susceptibilities_HIVStatus_2019_2021/Cultures_and_Susceptibilities_June_2019_June_29_2021.csv", delim = "|", escape_double = FALSE, trim_ws = TRUE)
+demographics_new <- read_excel("Z:/Enterobacterales_HIV_data/Susceptibilities_HIVStatus_2019_2021/Patients_Summary_Susceptibilties_HIV.xlsx")
+demographics_old <- read_excel("Z:/Enterobacterales_HIV_data/Procedures_meds_up_to_2018/original_files/VAN_DUIN_IRB18-3438_PATIENT_DEMOGRAPHICS.xlsx")
+intrinsic_resistance <- read.csv("Z:/intrinsic_resistance.csv")
+antibiotic_classes <- read.csv("Z:/breakpoints.csv")
+antibiotic_names <- read.csv("Z:/antibiotic_names.csv")
+organism_names <- read.csv("Z:/organism_names.csv")
+full_data <- readRDS("Z:/culture_data_clean_2000_2021.rds")
+```
+
+```{r}
+# Demographics for 2019-21 data
+demo_new <- demographics_new |>
+  clean_names() |>
+  mutate_if(is.character, tolower) |>
+  mutate(birth_date = as.Date(birth_date),
+         race1 = ifelse(race1 %in% c("other", "other race", "other/hispanic", "prefer not to answer", "unknown", "0"), race2, race1),
+         race_recode = case_when(race1 %in% c("white or caucasian") ~ "white",
+                                 race1 %in% c("black or african american") ~ "black",
+                                 race1 %in% c("american indian or alaska native", "native american", "hawaiian / other pac", "native hawaiian or other pacific islander") ~ "native american or pacific islander",
+                                 race1 %in% c("asian") ~ "asian",
+                                 race1 %in% c("other race", "prefer not to answer", "unknown", NA) ~ "unknown"),
+         ethnicity_recode = ifelse(ethnicity == "hispanic or latino", "hispanic", "non-hispanic")) |>
+  rename(patient_race = race1) |>
+  select(pat_mrn_id, birth_date, gender, patient_race, race_recode, ethnicity, ethnicity_recode, zip)
+# Demographics for 2014-18 data
+demo_old <- demographics_old |>
+  clean_names() |>
+  mutate_if(is.character, tolower) |>
+  select(current_mrn, dob, death_date, sex, patient_race, ethnic_group, zip) |>
+  rename(pat_mrn_id = current_mrn,
+         ethnicity = ethnic_group) |>
+  mutate(birth_date = as.Date(dob),
+         death_date = as.Date(death_date),
+         race_recode = case_when(patient_race %in% c("white or caucasian", "caucasian") ~ "white",
+                                 patient_race %in% c("black or african american", "african american") ~ "black",
+                                 patient_race %in% c("native american", "american indian or alaska native", "hawaiian / other pac", "native hawaiian or other pacific islander") ~ "native american or pacific islander",
+                                 patient_race %in% c("asian") ~ "asian",
+                                 patient_race %in% c("other", "other race", "other/hispanic", "patient refused", "unknown", NA) ~ "other/unknown"),
+         ethnicity_recode = ifelse(ethnicity != "hispanic or latino" | is.na(ethnicity), "non-hispanic", "hispanic"),
+         gender = case_when(sex == "f" ~ "female",
+                            sex == "m" ~ "male",
+                            TRUE ~ "unknown")) |>
+  select(-c(sex, dob))
+# Combined demographics dataset
+demo_all <- demo_new |>
+  full_join(demo_old) |>
+  add_count(pat_mrn_id) |>
+  filter(!(n == 2 & is.na(patient_race))) |> # If duplicate, keep record with race
+  filter(!(n == 2 & is.na(death_date))) |> # If duplicate, keep record with death date
+  mutate(zip_code = substr(zip, 1, 5)) |> # Keep first 5 digits in zip code
+  distinct() |>
+  select(-c(zip, n))
+# 105,564 patients
+```
+
+```{r}
+df <- cultures_2019_2021 |>
+  clean_names() |>
+  mutate_if(is.character, tolower) |>
+  filter(result_date < as.Date("2021-07-01")) |>
+  group_by(pat_mrn_id, organism_name) |>
+  slice_min(result_date) |> # Select first isolate of given species per patient
+  ungroup() |>
+  unite(isolate_id, pat_mrn_id, organism_name, result_date, remove = FALSE) |> # Create unique isolate ID
+  select(pat_mrn_id, isolate_id, department_name, specimen_source, specimen_type, organism_name, result_date, antibiotic, susceptibility) |>
+  distinct()
+```
+
+```{r}
+# Classify specimen source
+urinary <- df |>
+  select(isolate_id, specimen_type, specimen_source) |>
+  distinct() |>
+  filter_all(.vars_predicate = any_vars(str_detect(., pattern = "urine")))
+
+resp <- df |>
+  select(isolate_id, specimen_type, specimen_source) |>
+  distinct() |>
+  filter_all(.vars_predicate = any_vars(str_detect(., pattern = "trach|sput|resp|bronc|bal|lung")))
+
+df1 <- df |>
+  left_join(urinary |> mutate(urine = TRUE)) |>
+  left_join(resp |> mutate(resp = TRUE)) |>
+  mutate(isolate_source = case_when(specimen_type == "blood" ~ "blood",
+                                    urine ~ "urine",
+                                    resp ~ "resp",
+                                    TRUE ~ "other")) |>
+  mutate(source_order = match(isolate_source,  c("blood", "resp", "urine", "other"))) |> # Create hierarchy for specimen source
+  group_by(isolate_id) |>
+  filter(source_order == min(source_order)) |>
+  select(-c(source_order, urine, resp))
+```
+
+```{r}
+# Standardize organism and antibiotic names
+antibiotics <- antibiotic_classes |>
+  mutate_all(tolower) |>
+  select(antibiotic, antibiotic_class) |>
+  left_join(antibiotic_names)
+
+# Remove intrinsically resistant organism/antibiotic results
+# Classify nonsusceptible and source type
+df2 <- df1 |>
+  rename(organism_name_old = organism_name,
+         antibiotic_old = antibiotic) |>
+  left_join(organism_names) |>
+  left_join(antibiotics) |>
+  left_join(intrinsic_resistance |> mutate(int_resistant = TRUE)) |>
+  filter(is.na(int_resistant), 
+         antibiotic != "na",
+         susceptibility %in% c("susceptible", "resistant", "intermediate")) |>
+  mutate(nonsusceptible = if_else(susceptibility == "susceptible", FALSE, TRUE),
+         culture_year = year(result_date)) |>
+  select(pat_mrn_id, isolate_id, result_date, culture_year, specimen_source, specimen_type, isolate_source, organism_name, genus, antibiotic, antibiotic_class, susceptibility, nonsusceptible)
+```
+
+```{r}
+mdr_isolates <- df2 |>
+  select(pat_mrn_id, isolate_id, culture_year, organism_name, genus, antibiotic_class, nonsusceptible) |>
+  distinct() |>
+  mutate(resistant_to_class = nonsusceptible) |>  # Set antibiotic nonsusceptibility = class resistance
+  add_count(pat_mrn_id, organism_name, antibiotic_class) |> # Get number of classes tested
+  add_count(pat_mrn_id, organism_name, antibiotic_class, resistant_to_class) |> # Get number of results per class tested
+  mutate(resistant_to_class = ifelse(n != nn, TRUE, resistant_to_class)) |> # Change to resistant to antibiotic class = FALSE to TRUE if discordant
+  select(isolate_id, culture_year, antibiotic_class, resistant_to_class) |>
+  distinct() |>
+  group_by(isolate_id) |>
+  mutate(mdr = ifelse(sum(resistant_to_class) > 2, TRUE, FALSE)) |> # Define MDR
+  ungroup()
+```
+
+```{r}
+# 2014-2018 data
+# Recode cefepime
+cultures_old <- full_data |>
+  select(-c(race2, specimen_source_factor, race_factor, resistant_to_class, mdr)) |>
+  filter(culture_date > as.Date("2014-01-01")) |>
+  filter(culture_date < as.Date("2019-01-01"),
+         !is.na(nonsusceptible)) |>
+  rename(birth_date = dob,
+         patient_race = race1,
+         result_date = culture_date) |>
+  mutate(culture_year = year(result_date),
+         antibiotic_class = ifelse(antibiotic == "cefepime", "cephalosporin_4th_gen", class),
+         resistant_to_class = nonsusceptible) |>  # Set antibiotic nonsusceptibility = class resistance
+  add_count(pat_mrn_id, organism_name, antibiotic_class) |> # Get number of classes tested
+  add_count(pat_mrn_id, organism_name, antibiotic_class, resistant_to_class) |> # Get number of results per class tested
+  mutate(resistant_to_class = ifelse(n != nn, TRUE, resistant_to_class)) |> # Change to resistant to antibiotic class = FALSE to TRUE if discordant
+  left_join(demo_all |> select(pat_mrn_id, death_date))
+
+mdr_old <- cultures_old |>
+  select(isolate_id, antibiotic_class, resistant_to_class) |>
+  distinct() |>
+  group_by(isolate_id) |>
+  mutate(mdr = ifelse(sum(resistant_to_class) > 2, TRUE, FALSE)) |> # Define MDR
+  ungroup()
+
+cultures_old1 <- cultures_old |>
+  left_join(mdr_old)
+```
+
+```{r}
+df3 <- df2 |>
+  left_join(demo_all) |>
+  left_join(mdr_isolates) |>
+  mutate(gender = ifelse(!gender %in% c("male", "female"), "unknown", gender),
+         race_recode = ifelse(race_recode %in% c("other/unknown", NA), "unknown", race_recode),
+         ethnicity_recode = ifelse(ethnicity != "hispanic or latino" | is.na(ethnicity), "non-hispanic", "hispanic")) |>
+  select(pat_mrn_id, isolate_id, birth_date, death_date, gender, race_recode, patient_race, ethnicity, result_date, culture_year, specimen_source, specimen_type, isolate_source, organism_name, genus, antibiotic, antibiotic_class, susceptibility, nonsusceptible, resistant_to_class, mdr)
+
+df4 <- df3 |>
+  full_join(cultures_old1)
+
+
+n_distinct(df4$pat_mrn_id)
+n_distinct(df4$isolate_id)
+# 81,093 patients, 101,721 isolates
+# write_rds(df4, "culture_data_clean_2014_2021.rds")
+```
+
+```{r}
+# Frequencies
+df4 |>
+  select(isolate_id, culture_year, mdr) |>
+  distinct() |>
+  tabyl(culture_year, mdr) |>
+  adorn_percentages() |>
+  adorn_pct_formatting()
+# 19% MDR
+
+culture_data_clean_2014_2021 |>
+  group_by(class) |>
+  summarise(mn = mean(resistant_to_class))
+
+df4 |>
+  group_by(class, specimen_source_recode, resistant_to_class) |>
+  summarise(n = n()) |>
+  mutate(total = sum(n),
+         pct = n / total * 100) |>
+  filter(resistant_to_class) |>
+  ungroup |> 
+  filter(class %in% c("aminoglycoside", "cephalosporin_3rd_gen", "cephalosporin_2nd_gen", "nitrofuran", "penicillins", "penicillins_bli", "polypeptide", "sulfonamide", "quinolone") & specimen_source_recode != "other") |> 
+  select(-c(n, total, resistant_to_class))  |> 
+  spread(specimen_source_recode, pct)
+```
+
+
+
+
+
+
+
+
