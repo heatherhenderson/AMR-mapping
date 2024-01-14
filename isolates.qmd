@@ -36,42 +36,72 @@ setwd("\\\\Mac/Home/Desktop/AMR/isolate_data_project")
 # Read in raw data
 entero_isolates <- fread("W:/EnterobacteralesCultures_July_2021_Aug31_2023.csv")
 patient_demographics <- fread("W:/EnterobacteralesPatientDemographics.csv")
-antibiotic_names <- fread("antibiotic_names.csv")
-organism_names <- fread("organism_names.csv")
-intrinsic_resistance <- fread("intrinsic_resistance.csv")
-breakpoints <- fread("breakpoints.csv")
+antibiotic_names <- read_excel("antibiotic_names.xlsx")
+organism_names <- read_excel("organism_names.xlsx")
+intrinsic_resistance <- read_excel("intrinsic_resistance.xlsx")
+breakpoints <- read_excel("breakpoints.xlsx")
 ```
 
-# **Data Cleaning**
+# **Data cleaning**
+
+## **Demographics**
+
+```{r}
+demo <- patient_demographics |>
+  clean_names() |>
+  mutate_if(is.character, tolower) |>
+  mutate(birth_date = as.Date(birth_date),
+         death_date_epic = as.Date(death_date_epic),
+         death_date_state = as.Date(death_date_state)) |>
+  mutate(race_recode = case_when(race == "white" ~ race,
+                               race == "black/african american" ~ "black",
+                               TRUE ~ "other/unknown"),
+         ethnicity_recode = case_when(ethnicity == "not hispanic, latino/a, or spanish origin" ~ "nonhispanic",
+                                      ethnicity %in% c("", "unknown", "prefer not to answer") ~ "unknown",
+                                      TRUE ~ "hispanic"),
+         female = ifelse(gender == "female", TRUE, FALSE)) |>
+  mutate(death_date = death_date_state, # Accept state death data as default
+         death_date = ifelse(is.na(death_date_state), death_date_epic, death_date), # Fill missing with Epic death date if available
+         death_date = ifelse(pat_deid == "afd6441b37f5a05e0c73e258124f74eb", NA, death_date), # Correct dates for 2 patients
+         death_date = as.Date(ifelse(pat_deid == "3d4f3ccecceace0476866a4391db1cab", death_date_epic, death_date))) |>
+  select(pat_deid, birth_date, female, race, race_recode, ethnicity, ethnicity_recode, death_date)
+```
+
+## **Isolates**
 
 ```{r}
 df <- entero_isolates |>
   clean_names() |>
   mutate_if(is.character, tolower) |>
   arrange(pat_deid) |>
-  mutate(birth_date = as.Date(birth_date),
-         order_date = as.Date(order_time),
+  mutate(order_date = as.Date(order_time),
          result_date = as.Date(result_time),
          culture_year = year(result_date)) |>
-  select(-c(original_file_mrn, original_file_demrnid, pat_demrnid, encounter_deid, organism_group_name, genus, species, abnormal_yn, hide_antibiotic_yn, sensitivity_status, order_time, result_time))
+  select(-c(original_file_mrn, original_file_demrnid, pat_demrnid, encounter_deid, birth_date, organism_group_name, genus, species, abnormal_yn, hide_antibiotic_yn, sensitivity_status, order_time, result_time))
+```
 
+Join lookup tables
+
+```{r}
 df1 <- df |>
   rename(antibiotic, antibiotic_old) |> 
   rename(organism_name, organism_name_old) |> 
   left_join(antibiotic_names) |>
   left_join(breakpoints |> select(antibiotic_name, antibiotic_class), by = c("antibiotic" = "antibiotic_name")) |> # Standardize antibiotic names
-  left_join(organism_names |> select(-genus)) |> # Standardize organism names
+  left_join(organism_names) |> # Standardize organism names
   left_join(intrinsic_resistance |> mutate(intrinsic_resistance = TRUE)) |> # Remove intrinsically resistant organism-drug pairs
-  filter(!is.na(antibiotic) & !susceptibility %in% c("indeterminate", "no interpretation") & !antibiotic_class %in% c("fosfomycin", "glycopeptide", "lipopeptide", "oxazolidinone") & is.na(intrinsic_resistance)) |>
+  filter(!is.na(antibiotic) & !susceptibility %in% c("indeterminate", "no interpretation") & !antibiotic_class %in% c("fosfomycin", "glycopeptide", "lipopeptide", "oxazolidinone") & is.na(intrinsic_resistance),
+         antibiotic != "cefazolin", # Remove results for cefazolin
+         !is.na(organism_name)) |> 
   mutate(nonsusceptible = ifelse(susceptibility %in% c("susceptible", "susceptible-dose dependent"), FALSE, TRUE)) |> # Define nonsusceptible
-  select(-c(antibiotic_old, susceptibility, intrinsic_resistance))  |>
+  select(-c(order_proc_deid, antibiotic_old, susceptibility, intrinsic_resistance))  |>
   unite(isolate_id, pat_deid, organism_name, result_date, remove = FALSE) # Create unique isolate ID
 ```
 
-#### **Recode specimen source**
+### **Recode specimen source, select isolates from blood -> respiratory -> urine -> other**
 
 ```{r}
-# Get specimen types corresponding to respiratory
+# Get specimen types corresponding to respiratory and other
 resp <- df1 |>
   select(specimen_type) |>
   filter((str_detect(specimen_type, pattern = "bronch|phar|sput|trach"))) |>
@@ -84,70 +114,65 @@ other_src <- df1 |>
 
 df2 <- df1 |>
   mutate(isolate_source = case_when(specimen_type == "blood" ~ specimen_type,
-                            specimen_type %in% resp$specimen_type ~ "resp",
-                            specimen_type == "urine" ~ "urine",
-                            specimen_type %in% other_src$specimen_type ~ "other"),
+                                    specimen_type == "urine" ~ "urine",
+                                    specimen_type %in% resp$specimen_type ~ "resp",
+                                    specimen_type %in% other_src$specimen_type ~ "other"),
          isolate_source = factor(isolate_source, levels = c("urine", "blood", "resp", "other"))) |>
-  select(-c(specimen_source, specimen_type))
-```
-
-#### **Select isolates from blood -> respiratory -> urine -> other**
-
-```{r}
-isolates_to_keep <- df2 |>
-  group_by(pat_deid, result_date, organism_name, isolate_source) |>
-  summarise() |>
-  ungroup() |>
-  add_count(pat_deid, result_date, organism_name) |>
-  filter(n == 1 | n > 1 & isolate_source == "blood" | n > 1 & isolate_source == "resp") |>
-  add_count(pat_deid, result_date, organism_name) |>
-  filter(nn == 1 | n > 1 & isolate_source == "blood") |>
-  select(-c(n,nn))
-
-df3 <- df2 |>
-  inner_join(isolates_to_keep) |>
-  select(pat_deid, isolate_id, organism_name, result_date) |>
-  distinct() |>
+  select(-c(specimen_source, specimen_type))|>
   group_by(pat_deid, organism_name) |>
-  slice(which.min(result_date)) |>
-  ungroup()
+  slice_min(result_date) |> # Select first isolate of given species per patient
+  ungroup() |>
+  mutate(source_order = match(isolate_source,  c("blood", "resp", "urine", "other"))) |> # Create hierarchy for specimen source
+  group_by(isolate_id) |>
+  filter(source_order == min(source_order)) |>
+  select(-source_order)
+
+rm(resp, other_src)
 ```
 
-#### **Antibiotic class nonsusceptibility**
+### **Antibiotic class nonsusceptibility and MDR**
 
 ```{r}
-df4 <- df3 |>
-  left_join(df2) |>
-  select(pat_deid, isolate_id, organism_name, result_date, culture_year, antibiotic, antibiotic_class, nonsusceptible) |>
+mdr_isolates <- df2 |>
+  select(pat_deid, isolate_id, culture_year, organism_name, genus, antibiotic_class, nonsusceptible) |>
   distinct() |>
-  mutate(resistant_to_class = nonsusceptible) |> # Set antibiotic nonsusceptibility = class resistance
-  add_count(pat_deid, organism_name, antibiotic_class) |>
-  filter(n == 1 | (n > 1 & resistant_to_class)) # Select results for class resistance
-
-mdr <- df4 |>
-  select(pat_deid, isolate_id, culture_year, organism_name, antibiotic_class, resistant_to_class) |>
+  mutate(resistant_to_class = nonsusceptible) |>  # Set antibiotic nonsusceptibility = class resistance
+  add_count(pat_deid, organism_name, antibiotic_class) |> # Get number of classes tested
+  add_count(pat_deid, organism_name, antibiotic_class, resistant_to_class) |> # Get number of results per class tested
+  mutate(resistant_to_class = ifelse(n != nn, TRUE, resistant_to_class)) |> # Change to resistant to antibiotic class = FALSE to TRUE if discordant
+  select(isolate_id, culture_year, antibiotic_class, resistant_to_class) |>
   distinct() |>
   group_by(isolate_id) |>
   mutate(mdr = ifelse(sum(resistant_to_class) > 2, TRUE, FALSE)) |> # Define MDR
-  ungroup() |>
-  select(isolate_id, culture_year, mdr) |>
-  distinct()
-
-mdr |> tabyl(culture_year, mdr) |> adorn_percentages()
-
-df5 <- df3 |>
-  left_join(mdr) |>
-  left_join(df2) |>
-  select(pat_deid, isolate_id, parent_hospital, department_name, order_date, result_date, culture_year, isolate_source, organism_name, antibiotic, nonsusceptible, antibiotic_class, mdr)
+  ungroup()
 ```
 
 ```{r}
-df5 |> 
-  select(isolate_id, mdr) |>
-  distinct() |>
-  tabyl(mdr)
+df3 <- df2 |>
+  left_join(mdr_isolates) |>
+  left_join(demo) |>
+  select(pat_deid, isolate_id, birth_date, race_recode, ethnicity_recode, death_date, parent_hospital, department_name, order_date, result_date, culture_year, isolate_source, organism_name, genus, antibiotic, nonsusceptible, antibiotic_class, resistant_to_class, mdr)
 
-df5 |>
+n_distinct(df3$pat_deid)
+n_distinct(df3$isolate_id)
+
+# write_rds(df3, "W:/entero_isolates_2021_2023.rds")
+```
+
+```{r}
+df3 |>
+  select(isolate_id, genus) |>
+  distinct() |>
+  tabyl(genus) |>
+  adorn_pct_formatting()
+
+df3 |>
+  select(isolate_id, isolate_source) |>
+  distinct() |>
+  tabyl(isolate_source) |>
+  adorn_pct_formatting()
+
+df3 |>
   select(isolate_id, antibiotic_class, resistant_to_class) |>
   distinct() |>
   tabyl(antibiotic_class, resistant_to_class) |>
@@ -157,15 +182,22 @@ df5 |>
   adorn_pct_formatting() |>
   adorn_ns() |>
   adorn_title()
+
+df3 |> 
+  select(isolate_id, culture_year, mdr) |>
+  distinct() |>
+  tabyl(culture_year, mdr) |>
+  adorn_totals("row") |>
+  adorn_totals("col") |>
+  adorn_percentages() |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  adorn_title()
 ```
 
-```{r}
-df5 |>
-  filter(antibiotic_class == "carbapenem") |>
-  select(-c(antibiotic)) |>
-  distinct() |>
-  tabyl(nonsusceptible)
-```
+
+
+
 
 
 
