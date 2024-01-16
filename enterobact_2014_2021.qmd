@@ -236,7 +236,7 @@ n_distinct(df6$isolate_id)
 
 ```{r}
 # Frequencies
-df4 |>
+df6 |>
   select(isolate_id, culture_year, mdr) |>
   distinct() |>
   tabyl(culture_year, mdr) |>
@@ -244,7 +244,7 @@ df4 |>
   adorn_pct_formatting()
 # 19% MDR
 
-df4 |>
+df6 |>
   select(isolate_id, antibiotic_class, resistant_to_class) |>
   distinct() |>
   tabyl(antibiotic_class, resistant_to_class) |>
@@ -252,7 +252,7 @@ df4 |>
   adorn_pct_formatting() |>
   adorn_ns()
 
-df4 |>
+df6 |>
   group_by(antibiotic_class, isolate_source, resistant_to_class) |>
   summarise(n = n()) |>
   mutate(total = sum(n),
