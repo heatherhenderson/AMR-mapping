@@ -89,10 +89,6 @@ df <- cultures_2019_2021 |>
   clean_names() |>
   mutate_if(is.character, tolower) |>
   filter(result_date < as.Date("2021-07-01")) |>
-  group_by(pat_mrn_id, organism_name) |>
-  # Select first isolate of given species per patient
-  slice_min(result_date) |> 
-  ungroup() |>
   # Create unique isolate ID
   unite(isolate_id, pat_mrn_id, organism_name, result_date, remove = FALSE) |> 
   select(pat_mrn_id, isolate_id, department_name, specimen_source, specimen_type, organism_name, result_date, antibiotic, susceptibility) |>
@@ -145,11 +141,15 @@ df2 <- df1 |>
          susceptibility %in% c("susceptible", "resistant", "intermediate")) |>
   mutate(nonsusceptible = if_else(susceptibility == "susceptible", FALSE, TRUE),
          culture_year = year(result_date)) |>
+  group_by(pat_mrn_id, organism_name) |>
+  # Select first isolate of given species per patient
+  slice_min(result_date) |> 
+  ungroup() |>
   select(pat_mrn_id, isolate_id, result_date, culture_year, specimen_source, specimen_type, isolate_source, organism_name, genus, antibiotic, antibiotic_class, susceptibility, nonsusceptible)
 ```
 
 ```{r}
-mdr_isolates <- df2 |>
+df3 <- df2 |>
   select(pat_mrn_id, isolate_id, culture_year, organism_name, genus, antibiotic_class, nonsusceptible) |>
   distinct() |>
   # Set antibiotic nonsusceptibility = class resistance
@@ -165,7 +165,8 @@ mdr_isolates <- df2 |>
   group_by(isolate_id) |>
   # Define MDR
   mutate(mdr = ifelse(sum(resistant_to_class) > 2, TRUE, FALSE)) |> 
-  ungroup()
+  ungroup() |>
+  left_join(df2)
 ```
 
 ```{r}
@@ -209,21 +210,28 @@ n_distinct(cultures_old1$isolate_id)
 ```
 
 ```{r}
-df3 <- df2 |>
+df4 <- df3 |>
   left_join(demo_all) |>
-  left_join(mdr_isolates) |>
   mutate(gender = ifelse(!gender %in% c("male", "female"), "unknown", gender),
          race_recode = ifelse(race_recode %in% c("other/unknown", NA), "unknown", race_recode),
          ethnicity_recode = ifelse(ethnicity != "hispanic or latino" | is.na(ethnicity), "non-hispanic", "hispanic")) |>
   select(pat_mrn_id, isolate_id, birth_date, death_date, gender, race_recode, patient_race, ethnicity, result_date, culture_year, specimen_source, specimen_type, isolate_source, organism_name, genus, antibiotic, antibiotic_class, susceptibility, nonsusceptible, resistant_to_class, mdr)
+# Combine new and old data
+df5 <- df4 |>
+  bind_rows(cultures_old1)
+# Remove observations with same species isolated previously
+df6 <- df5 |>
+  select(pat_mrn_id, result_date, organism_name) |>
+  distinct() |>
+  group_by(pat_mrn_id, organism_name) |>
+  slice(which.min(result_date)) |>
+  ungroup() |>
+  left_join(df5)
 
-df4 <- df3 |>
-  full_join(cultures_old1)
-
-n_distinct(df4$pat_mrn_id)
-n_distinct(df4$isolate_id)
-# 81,093 patients, 101,721 isolates
-# write_rds(df4, "Z:/culture_data_clean_2014_2021.rds")
+n_distinct(df6$pat_mrn_id)
+n_distinct(df6$isolate_id)
+# 81,093 patients, 96,656 isolates
+# write_rds(df6, "Z:/culture_data_clean_2014_2021.rds")
 ```
 
 ```{r}
