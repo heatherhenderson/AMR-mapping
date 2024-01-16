@@ -1,5 +1,5 @@
 ---
-title: "Enterobacterales isolates 2014-2020"
+title: "Enterobacterales isolates 2014-2021"
 format: html
 self-contained: true
 date: "2022-09-13"
@@ -25,15 +25,14 @@ packages(c("haven", "readxl", "tidyverse" , "data.table" , "naniar", "rockchalk"
 ```{r}
 options(scipen=999)
 setwd("C:/Users/henderh/Desktop/amr_proj")
-cultures_2014_2018 <- fread("Z:/Enterobacterales_HIV_data/18_3438 patient location corrected.csv")
 cultures_2019_2021 <- read_delim("Z:/Enterobacterales_HIV_data/Susceptibilities_HIVStatus_2019_2021/Cultures_and_Susceptibilities_June_2019_June_29_2021.csv", delim = "|", escape_double = FALSE, trim_ws = TRUE)
 demographics_new <- read_excel("Z:/Enterobacterales_HIV_data/Susceptibilities_HIVStatus_2019_2021/Patients_Summary_Susceptibilties_HIV.xlsx")
 demographics_old <- read_excel("Z:/Enterobacterales_HIV_data/Procedures_meds_up_to_2018/original_files/VAN_DUIN_IRB18-3438_PATIENT_DEMOGRAPHICS.xlsx")
-intrinsic_resistance <- read.csv("Z:/intrinsic_resistance.csv")
-antibiotic_classes <- read.csv("Z:/breakpoints.csv")
-antibiotic_names <- read.csv("Z:/antibiotic_names.csv")
-organism_names <- read.csv("Z:/organism_names.csv")
-full_data <- readRDS("Z:/culture_data_clean_2000_2021.rds")
+antibiotic_names <- read_excel("antibiotic_names.xlsx")
+antibiotic_classes <- read_excel("breakpoints.xlsx")
+organism_names <- read_excel("organism_names.xlsx")
+intrinsic_resistance <- read_excel("intrinsic_resistance.xlsx")
+full_data_old <- readRDS("Z:/culture_data_clean_2000_2021.rds")
 ```
 
 ```{r}
@@ -49,14 +48,14 @@ demo_new <- demographics_new |>
                                  race1 %in% c("asian") ~ "asian",
                                  race1 %in% c("other race", "prefer not to answer", "unknown", NA) ~ "unknown"),
          ethnicity_recode = ifelse(ethnicity == "hispanic or latino", "hispanic", "non-hispanic")) |>
-  rename(patient_race = race1) |>
+  dplyr::rename(patient_race = race1) |>
   select(pat_mrn_id, birth_date, gender, patient_race, race_recode, ethnicity, ethnicity_recode, zip)
 # Demographics for 2014-18 data
 demo_old <- demographics_old |>
   clean_names() |>
   mutate_if(is.character, tolower) |>
   select(current_mrn, dob, death_date, sex, patient_race, ethnic_group, zip) |>
-  rename(pat_mrn_id = current_mrn,
+  dplyr::rename(pat_mrn_id = current_mrn,
          ethnicity = ethnic_group) |>
   mutate(birth_date = as.Date(dob),
          death_date = as.Date(death_date),
@@ -74,9 +73,12 @@ demo_old <- demographics_old |>
 demo_all <- demo_new |>
   full_join(demo_old) |>
   add_count(pat_mrn_id) |>
-  filter(!(n == 2 & is.na(patient_race))) |> # If duplicate, keep record with race
-  filter(!(n == 2 & is.na(death_date))) |> # If duplicate, keep record with death date
-  mutate(zip_code = substr(zip, 1, 5)) |> # Keep first 5 digits in zip code
+  # If duplicate, keep record with race
+  filter(!(n == 2 & is.na(patient_race))) |> 
+  # If duplicate, keep record with death date
+  filter(!(n == 2 & is.na(death_date))) |> 
+  # Extract first 5 digits in zip code
+  mutate(zip_code = substr(zip, 1, 5)) |> 
   distinct() |>
   select(-c(zip, n))
 # 105,564 patients
@@ -88,9 +90,11 @@ df <- cultures_2019_2021 |>
   mutate_if(is.character, tolower) |>
   filter(result_date < as.Date("2021-07-01")) |>
   group_by(pat_mrn_id, organism_name) |>
-  slice_min(result_date) |> # Select first isolate of given species per patient
+  # Select first isolate of given species per patient
+  slice_min(result_date) |> 
   ungroup() |>
-  unite(isolate_id, pat_mrn_id, organism_name, result_date, remove = FALSE) |> # Create unique isolate ID
+  # Create unique isolate ID
+  unite(isolate_id, pat_mrn_id, organism_name, result_date, remove = FALSE) |> 
   select(pat_mrn_id, isolate_id, department_name, specimen_source, specimen_type, organism_name, result_date, antibiotic, susceptibility) |>
   distinct()
 ```
@@ -114,7 +118,8 @@ df1 <- df |>
                                     urine ~ "urine",
                                     resp ~ "resp",
                                     TRUE ~ "other")) |>
-  mutate(source_order = match(isolate_source,  c("blood", "resp", "urine", "other"))) |> # Create hierarchy for specimen source
+  # Create hierarchy for specimen source
+  mutate(source_order = match(isolate_source,  c("blood", "resp", "urine", "other"))) |> 
   group_by(isolate_id) |>
   filter(source_order == min(source_order)) |>
   select(-c(source_order, urine, resp))
@@ -122,15 +127,15 @@ df1 <- df |>
 
 ```{r}
 # Standardize organism and antibiotic names
-antibiotics <- antibiotic_classes |>
-  mutate_all(tolower) |>
+antibiotics <- antibiotic_classes |> 
+  dplyr::rename(antibiotic = antibiotic_name) |>
   select(antibiotic, antibiotic_class) |>
   left_join(antibiotic_names)
 
 # Remove intrinsically resistant organism/antibiotic results
 # Classify nonsusceptible and source type
 df2 <- df1 |>
-  rename(organism_name_old = organism_name,
+  dplyr::rename(organism_name_old = organism_name,
          antibiotic_old = antibiotic) |>
   left_join(organism_names) |>
   left_join(antibiotics) |>
@@ -147,45 +152,60 @@ df2 <- df1 |>
 mdr_isolates <- df2 |>
   select(pat_mrn_id, isolate_id, culture_year, organism_name, genus, antibiotic_class, nonsusceptible) |>
   distinct() |>
-  mutate(resistant_to_class = nonsusceptible) |>  # Set antibiotic nonsusceptibility = class resistance
-  add_count(pat_mrn_id, organism_name, antibiotic_class) |> # Get number of classes tested
-  add_count(pat_mrn_id, organism_name, antibiotic_class, resistant_to_class) |> # Get number of results per class tested
-  mutate(resistant_to_class = ifelse(n != nn, TRUE, resistant_to_class)) |> # Change to resistant to antibiotic class = FALSE to TRUE if discordant
+  # Set antibiotic nonsusceptibility = class resistance
+  mutate(resistant_to_class = nonsusceptible) |>  
+  # Get number of classes tested
+  add_count(pat_mrn_id, organism_name, antibiotic_class) |> 
+  # Get number of results per class tested
+  add_count(pat_mrn_id, organism_name, antibiotic_class, resistant_to_class) |> 
+  # Change to resistant to antibiotic class = FALSE to TRUE if discordant
+  mutate(resistant_to_class = ifelse(n != nn, TRUE, resistant_to_class)) |> 
   select(isolate_id, culture_year, antibiotic_class, resistant_to_class) |>
   distinct() |>
   group_by(isolate_id) |>
-  mutate(mdr = ifelse(sum(resistant_to_class) > 2, TRUE, FALSE)) |> # Define MDR
+  # Define MDR
+  mutate(mdr = ifelse(sum(resistant_to_class) > 2, TRUE, FALSE)) |> 
   ungroup()
 ```
 
 ```{r}
 # 2014-2018 data
 # Recode cefepime
-cultures_old <- full_data |>
+cultures_old <- full_data_old |>
   select(-c(race2, specimen_source_factor, race_factor, resistant_to_class, mdr)) |>
   filter(culture_date > as.Date("2014-01-01")) |>
   filter(culture_date < as.Date("2019-01-01"),
          !is.na(nonsusceptible)) |>
-  rename(birth_date = dob,
+  dplyr::rename(birth_date = dob,
          patient_race = race1,
-         result_date = culture_date) |>
+         result_date = culture_date,
+         isolate_source = specimen_source_recode) |>
   mutate(culture_year = year(result_date),
          antibiotic_class = ifelse(antibiotic == "cefepime", "cephalosporin_4th_gen", class),
-         resistant_to_class = nonsusceptible) |>  # Set antibiotic nonsusceptibility = class resistance
-  add_count(pat_mrn_id, organism_name, antibiotic_class) |> # Get number of classes tested
-  add_count(pat_mrn_id, organism_name, antibiotic_class, resistant_to_class) |> # Get number of results per class tested
-  mutate(resistant_to_class = ifelse(n != nn, TRUE, resistant_to_class)) |> # Change to resistant to antibiotic class = FALSE to TRUE if discordant
-  left_join(demo_all |> select(pat_mrn_id, death_date))
+         # Set antibiotic nonsusceptibility = class resistance
+         resistant_to_class = nonsusceptible) |>  
+  # Get number of classes tested
+  add_count(pat_mrn_id, organism_name, antibiotic_class) |> 
+  # Get number of results per class tested
+  add_count(pat_mrn_id, organism_name, antibiotic_class, resistant_to_class) |> 
+  # Change to resistant to antibiotic class = FALSE to TRUE if discordant
+  mutate(resistant_to_class = ifelse(n != nn, TRUE, resistant_to_class)) |> 
+  left_join(demo_all |> select(pat_mrn_id, death_date)) |>
+  select(-c(n,nn))
 
-mdr_old <- cultures_old |>
+cultures_old1 <- cultures_old |>
   select(isolate_id, antibiotic_class, resistant_to_class) |>
   distinct() |>
   group_by(isolate_id) |>
-  mutate(mdr = ifelse(sum(resistant_to_class) > 2, TRUE, FALSE)) |> # Define MDR
-  ungroup()
+  # Define MDR
+  mutate(mdr = ifelse(sum(resistant_to_class) > 2, TRUE, FALSE)) |> 
+  ungroup() |>
+  # Rejoin full data
+  full_join(cultures_old) |> 
+  select(pat_mrn_id, isolate_id, birth_date, death_date, gender, race_recode, patient_race, ethnicity, result_date, culture_year, specimen_source, specimen_type, isolate_source, organism_name, genus, antibiotic, antibiotic_class, susceptibility, nonsusceptible, resistant_to_class, mdr)
 
-cultures_old1 <- cultures_old |>
-  left_join(mdr_old)
+n_distinct(cultures_old1$pat_mrn_id)
+n_distinct(cultures_old1$isolate_id)
 ```
 
 ```{r}
@@ -200,11 +220,10 @@ df3 <- df2 |>
 df4 <- df3 |>
   full_join(cultures_old1)
 
-
 n_distinct(df4$pat_mrn_id)
 n_distinct(df4$isolate_id)
 # 81,093 patients, 101,721 isolates
-# write_rds(df4, "culture_data_clean_2014_2021.rds")
+# write_rds(df4, "Z:/culture_data_clean_2014_2021.rds")
 ```
 
 ```{r}
@@ -217,21 +236,26 @@ df4 |>
   adorn_pct_formatting()
 # 19% MDR
 
-culture_data_clean_2014_2021 |>
-  group_by(class) |>
-  summarise(mn = mean(resistant_to_class))
+df4 |>
+  select(isolate_id, antibiotic_class, resistant_to_class) |>
+  distinct() |>
+  tabyl(antibiotic_class, resistant_to_class) |>
+  adorn_percentages() |>
+  adorn_pct_formatting() |>
+  adorn_ns()
 
 df4 |>
-  group_by(class, specimen_source_recode, resistant_to_class) |>
+  group_by(antibiotic_class, isolate_source, resistant_to_class) |>
   summarise(n = n()) |>
   mutate(total = sum(n),
          pct = n / total * 100) |>
   filter(resistant_to_class) |>
-  ungroup |> 
-  filter(class %in% c("aminoglycoside", "cephalosporin_3rd_gen", "cephalosporin_2nd_gen", "nitrofuran", "penicillins", "penicillins_bli", "polypeptide", "sulfonamide", "quinolone") & specimen_source_recode != "other") |> 
+  ungroup() |> 
+  filter(antibiotic_class %in% c("aminoglycoside", "cephalosporin_3rd_gen", "cephalosporin_2nd_gen", "nitrofuran", "penicillins", "penicillins_bli", "polypeptide", "sulfonamide", "quinolone") & isolate_source != "other") |> 
   select(-c(n, total, resistant_to_class))  |> 
-  spread(specimen_source_recode, pct)
+  spread(isolate_source, pct)
 ```
+
 
 
 
