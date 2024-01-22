@@ -47,10 +47,11 @@ demo_new <- demographics_new |>
                                  race1 %in% c("american indian or alaska native", "native american", "hawaiian / other pac", "native hawaiian or other pacific islander") ~ "native american or pacific islander",
                                  race1 %in% c("asian") ~ "asian",
                                  race1 %in% c("other race", "prefer not to answer", "unknown", NA) ~ "unknown"),
-         ethnicity_recode = ifelse(ethnicity == "hispanic or latino", "hispanic", "non-hispanic")) |>
+         ethnicity_recode = ifelse(ethnicity == "hispanic or latino", "hispanic", "non-hispanic"),
+         zip_code = substr(zip, 1, 5)) |>
   dplyr::rename(patient_race = race1) |>
-  select(pat_mrn_id, birth_date, gender, patient_race, race_recode, ethnicity, ethnicity_recode, zip)
-# Demographics for 2014-18 data
+  select(pat_mrn_id, birth_date, gender, patient_race, race_recode, ethnicity, ethnicity_recode, zip_code)
+
 demo_old <- demographics_old |>
   clean_names() |>
   mutate_if(is.character, tolower) |>
@@ -67,21 +68,9 @@ demo_old <- demographics_old |>
          ethnicity_recode = ifelse(ethnicity != "hispanic or latino" | is.na(ethnicity), "non-hispanic", "hispanic"),
          gender = case_when(sex == "f" ~ "female",
                             sex == "m" ~ "male",
-                            TRUE ~ "unknown")) |>
-  select(-c(sex, dob))
-# Combined demographics dataset
-demo_all <- demo_new |>
-  full_join(demo_old) |>
-  add_count(pat_mrn_id) |>
-  # If duplicate, keep record with race
-  filter(!(n == 2 & is.na(patient_race))) |> 
-  # If duplicate, keep record with death date
-  filter(!(n == 2 & is.na(death_date))) |> 
-  # Extract first 5 digits in zip code
-  mutate(zip_code = substr(zip, 1, 5)) |> 
-  distinct() |>
-  select(-c(zip, n))
-# 105,564 patients
+                            TRUE ~ "unknown"),
+         zip_code = substr(zip, 1, 5)) |>
+  select(-c(sex, dob, zip))
 ```
 
 ```{r}
@@ -138,6 +127,7 @@ df2 <- df1 |>
   left_join(intrinsic_resistance |> mutate(int_resistant = TRUE)) |>
   filter(is.na(int_resistant), 
          antibiotic != "na",
+         antibiotic_class != "cephalosporin_1st_gen",
          susceptibility %in% c("susceptible", "resistant", "intermediate")) |>
   mutate(nonsusceptible = if_else(susceptibility == "susceptible", FALSE, TRUE),
          culture_year = year(result_date)) |>
@@ -191,7 +181,7 @@ cultures_old <- full_data_old |>
   add_count(pat_mrn_id, organism_name, antibiotic_class, resistant_to_class) |> 
   # Change to resistant to antibiotic class = FALSE to TRUE if discordant
   mutate(resistant_to_class = ifelse(n != nn, TRUE, resistant_to_class)) |> 
-  left_join(demo_all |> select(pat_mrn_id, death_date)) |>
+  left_join(demo_old |> select(pat_mrn_id, death_date)) |>
   select(-c(n,nn))
 
 cultures_old1 <- cultures_old |>
@@ -203,7 +193,7 @@ cultures_old1 <- cultures_old |>
   ungroup() |>
   # Rejoin full data
   full_join(cultures_old) |> 
-  select(pat_mrn_id, isolate_id, birth_date, death_date, gender, race_recode, patient_race, ethnicity, result_date, culture_year, specimen_source, specimen_type, isolate_source, organism_name, genus, antibiotic, antibiotic_class, susceptibility, nonsusceptible, resistant_to_class, mdr)
+  select(pat_mrn_id, isolate_id, birth_date, death_date, gender, race_recode, patient_race, ethnicity, zip_code, result_date, culture_year, specimen_source, specimen_type, isolate_source, organism_name, genus, antibiotic, antibiotic_class, susceptibility, nonsusceptible, resistant_to_class, mdr)
 
 n_distinct(cultures_old1$pat_mrn_id)
 n_distinct(cultures_old1$isolate_id)
@@ -211,11 +201,12 @@ n_distinct(cultures_old1$isolate_id)
 
 ```{r}
 df4 <- df3 |>
-  left_join(demo_all) |>
+  left_join(demo_new) |>
+  left_join(demo_old |> select(pat_mrn_id, death_date)) |>
   mutate(gender = ifelse(!gender %in% c("male", "female"), "unknown", gender),
          race_recode = ifelse(race_recode %in% c("other/unknown", NA), "unknown", race_recode),
          ethnicity_recode = ifelse(ethnicity != "hispanic or latino" | is.na(ethnicity), "non-hispanic", "hispanic")) |>
-  select(pat_mrn_id, isolate_id, birth_date, death_date, gender, race_recode, patient_race, ethnicity, result_date, culture_year, specimen_source, specimen_type, isolate_source, organism_name, genus, antibiotic, antibiotic_class, susceptibility, nonsusceptible, resistant_to_class, mdr)
+  select(pat_mrn_id, isolate_id, birth_date, death_date, gender, race_recode, patient_race, ethnicity, zip_code, result_date, culture_year, specimen_source, specimen_type, isolate_source, organism_name, genus, antibiotic, antibiotic_class, susceptibility, nonsusceptible, resistant_to_class, mdr)
 # Combine new and old data
 df5 <- df4 |>
   bind_rows(cultures_old1)
