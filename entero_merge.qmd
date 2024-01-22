@@ -1,14 +1,12 @@
 ---
-title: "Antimicrobial-resistant Enterobacterales in people with HIV: 2021-2023"
+title: "Antimicrobial-resistant Enterobacterales in people with HIV: 2014-2023"
+author: "Henderson, Heather"
 date: "`r format(Sys.time(), '%B %d, %Y')`"
-output:
-  html_document:
-    code_folding: show
-    toc: yes
-    toc_depth: 3
-    toc_float: yes
-editor_options: 
-  chunk_output_type: console
+format: html
+self-contained: true
+toc: true
+toc-depth: 2
+editor: visual
 ---
 
 ```{r setup, include=FALSE}
@@ -28,13 +26,16 @@ packages <- function(x){
 packages(c("readr", "readxl", "haven", "tidyverse" , "data.table" , "naniar", "rockchalk", "lubridate", "kableExtra", "DT", "formatR", "zoo", "binom", "plotly", "janitor", "sjlabelled", "Hmisc", "rms", "aod", "sandwich", "lmtest", "tableone", "broom", "gmodels", "arsenal", "investr", "RColorBrewer", "lessR"))
 ```
 
+# Raw data files
+
 ```{r}
 culture_data_clean_2014_2021 <- readRDS("Z:/culture_data_clean_2014_2021.rds")
 culture_data_clean_2021_2023 <- readRDS("//ad.unc.edu/med/tracs/Groups/Research/CDWH/Van Duin_David_IRB23-2326//entero_isolates_2021_2023.rds")
 existing_mrns <- read_excel("//ad.unc.edu/med/tracs/Groups/Research/CDWH/Van Duin_David_IRB23-2326/ExistingDatasetMRNs.xlsx")
 ```
 
-## **Existing MRNs**
+# Existing MRNs
+New ID numbers to deidentify patients in 2014-2021 data
 
 ```{r}
 mrns <- existing_mrns |>
@@ -44,8 +45,9 @@ mrns <- existing_mrns |>
                 pat_deid = current_pat_deid)
 ```
 
+# Combine datasets March 2014 - June 2021 with July 2021 - August 2023
+
 ```{r}
-# Combine datasets 2014-2023
 df_2014_21 <- culture_data_clean_2014_2021 |>
   arrange(result_date, pat_mrn_id) |>
   dplyr::rename(original_file_mrn = pat_mrn_id,
@@ -56,20 +58,22 @@ df_2014_21 <- culture_data_clean_2014_2021 |>
   filter(!is.na(pat_deid))
 
 n_distinct(df_2014_21$isolate_id)
-n_distinct(df_2014_21$original_file_mrn)
 # 95,358 isolates
-# 80,526 patients
 
 df_2021_23 <- culture_data_clean_2021_2023 |> 
   select(-c(parent_hospital, department_name, order_date))
+
+n_distinct(df_2021_23$isolate_id)
+# 74,551 isolates
 
 enterobacterales_all <- df_2014_21 |>
   bind_rows(df_2021_23) |>
   select(pat_deid, original_file_mrn, isolate_id, birth_date, death_date, gender, race_recode, ethnicity_recode, zip_code, result_date, culture_year, isolate_source, organism_name, genus, antibiotic, nonsusceptible, antibiotic_class, resistant_to_class, mdr)
 ```
 
-```{r}
 # Remove 10,306 repeat isolates
+
+```{r}
 enterobacterales_all_final <- enterobacterales_all |>
   group_by(pat_deid, organism_name) |>
   slice_min(result_date) |>
@@ -81,6 +85,8 @@ n_distinct(enterobacterales_all_final$pat_deid)
 # 130,289 patients
 ```
 
+# Frequency tables
+
 ```{r}
 enterobacterales_all_final |>
   select(original_file_mrn, pat_deid, isolate_id, culture_year, organism_name, mdr) |>
@@ -91,30 +97,39 @@ enterobacterales_all_final |>
   adorn_percentages() |>
   adorn_pct_formatting() |>
   adorn_ns() |>
-  adorn_title()
+  adorn_title() |>
+  kable("html") |>
+  kable_styling()
 
 enterobacterales_all_final |>
   select(isolate_id, genus) |>
   distinct() |>
   tabyl(genus) |>
-  adorn_pct_formatting()
+  adorn_pct_formatting() |>
+  kable("html") |>
+  kable_styling()
 
 enterobacterales_all_final |>
   select(isolate_id, isolate_source) |>
   distinct() |>
   tabyl(isolate_source) |>
-  adorn_pct_formatting()
+  adorn_pct_formatting() |>
+  kable("html") |>
+  kable_styling()
 
 enterobacterales_all_final |>
   select(isolate_id, antibiotic_class, resistant_to_class) |>
   distinct() |>
+  filter(!str_detect(antibiotic_class, "peptide|amphenicol|oxazo|glycylcycline|macrolide|3rd_gen_bli|carbapenem_bli")) |>
   tabyl(antibiotic_class, resistant_to_class) |>
   adorn_totals("row") |>
   adorn_totals("col") |>
   adorn_percentages() |>
   adorn_pct_formatting() |>
   adorn_ns() |>
-  adorn_title()
+  adorn_title() |>
+  kable("html") |>
+  kable_styling()
 ```
 
 ```{r}
