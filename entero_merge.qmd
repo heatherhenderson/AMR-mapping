@@ -35,6 +35,7 @@ existing_mrns <- read_excel("//ad.unc.edu/med/tracs/Groups/Research/CDWH/Van Dui
 ```
 
 # Existing MRNs
+
 New ID numbers to deidentify patients in 2014-2021 data
 
 ```{r}
@@ -136,9 +137,35 @@ enterobacterales_all_final |>
 # write_rds(enterobacterales_all_final, "//ad.unc.edu/med/tracs/Groups/Research/CDWH/Van Duin_David_IRB23-2326//entero_isolates_2014_2023.rds")
 ```
 
+# Data for mapping
 
+```{r}
+entero_isolates_2014_2023 <- readRDS("Y:/entero_isolates_2014_2023.rds")
+zip_county <- read_excel("J:/ID/AMR_map_van_Duin/nc_zip_county.xlsx", col_types = c("text", "text", "text"))
+counties <- zip_county |> select(county_prop) |> distinct()
 
+df <- entero_isolates_2014_2023 |>
+  select(pat_deid, isolate_id, zip_code, mdr) |>
+  distinct() |>
+  left_join(zip_county) |>
+  filter(!is.na(county_prop))
 
+df1 <- df |>
+  add_count(county_prop, mdr) |>
+  add_count(county_prop) |>
+  select(mdr, county_prop, n, nn) |>
+  distinct()
+
+df2 <- df1 |>
+  filter(nn >= 10,
+         mdr) |>
+  right_join(counties) |>
+  mutate(pct_mdr = round(n / nn * 100),
+         pct_mdr = ifelse(is.na(pct_mdr), 0, pct_mdr)) |>
+  select(-mdr)
+
+fwrite(df2, "enterobacterales_mdr.csv")
+```
 
 
 
