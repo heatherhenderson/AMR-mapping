@@ -1,0 +1,222 @@
+---
+title: "Retail meats"
+author: "Henderson, Heather"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+format: html
+self-contained: true
+toc: true
+toc-depth: 2
+editor: visual
+---
+
+```{r}
+#| label: load-packages
+#| echo: false
+#| output: false
+packages <- function(x) {
+  for (i in x) {
+    if (!require(i, character.only = TRUE)) {
+      install.packages(i, dependencies = TRUE)
+      library(i, character.only = TRUE)
+    }
+  }
+}
+packages(c("haven", "readxl", "readr", "tidyverse" , "data.table" , "naniar", "rockchalk", "lubridate", "kableExtra", "DT", "formatR", "zoo", "binom", "plotly", "janitor", "sjlabelled", "Hmisc", "rms", "aod", "sandwich", "lmtest", "tableone", "broom", "pooling", "glmnet", "caret", "class", "investr", "creditmodel", "furniture", "arsenal", "RColorBrewer", "survminer", "survival", "cmprsk", "condSURV", "tidycmprsk", "gtsummary", "ggsurvfit", "vroom"))
+```
+
+# **Raw data files**
+
+```{r}
+#| echo: false
+
+setwd("\\\\Mac/Home/Desktop/AMR/NARMS_retail_meat/amr_mapping_rproj/")
+# salmonella_isolates <- read_excel("\\\\Mac/Home/Desktop/AMR/NARMS_retail_meat/data files/salmonella_2018_20.xlsx")
+# salmonella_isolates_2018 <- read_excel("\\\\Mac/Home/Desktop/AMR/NARMS_retail_meat/data files/salmonella_2018_20.xlsx", sheet = "2018")
+# salmonella_metadata_2018 <- read_excel("\\\\Mac/Home/Desktop/AMR/NARMS_retail_meat/data files/Salmonella Metadata 2018-2023.xlsx", sheet = "2018")
+# salmonella_metadata_2019 <- read_excel("//Mac/Home/Desktop/AMR/NARMS_retail_meat/data files/Salmonella Metadata 2018-2023.xlsx", sheet = "2019")
+# salmonella_metadata_2020 <- read_excel("//Mac/Home/Desktop/AMR/NARMS_retail_meat/data files/Salmonella Metadata 2018-2023.xlsx", sheet = "2020")
+# ecoli_isolates <- read_excel("\\\\Mac/Home/Desktop/AMR/NARMS_retail_meat/data files/ecoli_2018_19.xlsx")
+# ecoli_metadata_2018 <- read_excel("\\\\Mac/Home/Desktop/AMR/NARMS_retail_meat/data files/ecoli_metadata_2018_2023.xlsx", sheet = "2018")
+# ecoli_metadata_2019 <- read_excel("//Mac/Home/Desktop/AMR/NARMS_retail_meat/data files/ecoli_metadata_2018_2023.xlsx", sheet = "2019")
+ecoli <- read_excel("ecoli.xlsx")
+salmonella <- read_excel("salmonella.xlsx")
+zip_county <- read_excel("zips_counties_nc_mdr.xlsx")
+```
+
+# **Salmonella**
+
+Salmonella isolates from 2019-2020
+
+```{r}
+# salmonella_isolates1 <- salmonella_isolates |>
+#   clean_names() |>
+#   select(site_accession, contains("interp")) |>
+#   mutate_at(c(2:15), ~ifelse(. == "susceptible", FALSE, TRUE)) |>
+#   mutate(site_accession = tolower(site_accession),
+#          aminoglycoside = gen_interp,
+#          carbapenem = mero_interp,
+#          ceph2g = cefox_interp,
+#          ceph3g = ceftriax_interp,
+#          chloramphenicol = chloramph_interp,
+#          macrolide = azithro_interp,
+#          penicillin = amp_interp,
+#          pen_bli = amoxi_clav_interp,
+#          polymixin = colistin_interp,
+#          quinolone = ifelse(cipro_interp | nalid_interp, TRUE, FALSE),
+#          sulfonamide = ifelse(sulfis_interp | trimeth_sulfa_interp, TRUE, FALSE),
+#          tetracycline = tetra_interp) |>
+#   select(-c(2:15)) |>
+#   mutate(num_resist = across(2:13) %>% rowSums,
+#          mdr = ifelse(num_resist >= 3, TRUE, FALSE))
+```
+
+Salmonella isolates from 2018
+
+```{r}
+# salmonella_isolates_2018_1 <- salmonella_isolates_2018 |>
+#   clean_names() |>
+#   select(site_accession, antibiotic, resistance_phenotype) |>
+#   pivot_wider(names_from = antibiotic, values_from = resistance_phenotype) |>
+#   clean_names() |>
+#   mutate_at(c(2:15), ~ifelse(. == "susceptible", FALSE, TRUE)) |>
+#   mutate(site_accession = tolower(site_accession),
+#          aminoglycoside = ifelse(gentamicin | streptomycin, TRUE, FALSE),
+#          carbapenem = meropenem,
+#          ceph2g = cefoxitin,
+#          ceph3g = ceftriaxone,
+#          macrolide = azithromycin,
+#          penicillin = ampicillin,
+#          pen_bli = amoxicillin_clavulanic_acid,
+#          quinolone = ifelse(ciprofloxacin | nalidixic_acid, TRUE, FALSE),
+#          sulfonamide = ifelse(sulfisoxazole | trimethoprim_sulfamethoxazole, TRUE, FALSE)) |>
+#   select(site_accession, aminoglycoside, carbapenem, ceph2g, ceph3g, chloramphenicol, macrolide, penicillin, pen_bli, quinolone, sulfonamide, tetracycline) |>
+#   mutate(num_resist = across(2:12) %>% rowSums,
+#          mdr = ifelse(num_resist >= 3, TRUE, FALSE))
+```
+
+Metadata for Salmonella isolates
+
+```{r}
+# salmonella_metadata_2018_1 <- salmonella_metadata_2018 |>
+#   clean_names() |>
+#   mutate_if(is.character, tolower) |>
+#   select(accession_no, meat_type, store_name, address) |>
+#   rename(site_accession = accession_no)
+# 
+# salmonella_metadata_2019_1 <- salmonella_metadata_2019 |>
+#   clean_names() |>
+#   mutate_if(is.character, tolower) |>
+#   select(accession_no, meat_type, store_name, address) |>
+#   rename(site_accession = accession_no)
+# 
+# salmonella_metadata_2020_1 <- salmonella_metadata_2020 |>
+#   clean_names() |>
+#   mutate_if(is.character, tolower) |>
+#   select(accession_no, meat_type, store_name, address) |>
+#   rename(site_accession = accession_no)
+# 
+# salmonella_metadata_all <- rbind(salmonella_metadata_2018_1, salmonella_metadata_2019_1, salmonella_metadata_2020_1)
+```
+
+Full Salmonella dataset
+
+```{r}
+# salmonella <- salmonella_isolates1 |>
+#   bind_rows(salmonella_isolates_2018_1) |>
+#   left_join(salmonella_metadata_all)
+# 
+# # fwrite(salmonella, "salmonella.csv")
+# rm(list=ls(pattern="^salmonella_"))
+```
+
+# **E. coli**
+
+E. coli isolates from 2018-2019
+
+```{r}
+# ecoli_isolates2 <- ecoli_isolates |>
+#   clean_names() |>
+#   select(site_accession, contains("interp")) |>
+#   mutate_at(c(2:15), ~ifelse(. == "susceptible", FALSE, TRUE)) |>
+#   mutate(site_accession = tolower(site_accession),
+#          aminoglycoside = ifelse(gen_interp | strepto_interp, TRUE, FALSE),
+#          carbapenem = mero_interp,
+#          ceph2g = cefox_interp,
+#          ceph3g = ceftriax_interp,
+#          chloramphenicol = chloramph_interp,
+#          macrolide = azithro_interp,
+#          penicillin = amp_interp,
+#          pen_bli = amoxi_clav_interp,
+#          quinolone = ifelse(cipro_interp | nalid_interp, TRUE, FALSE),
+#          sulfonamide = ifelse(sulfis_interp | trimeth_sulfa_interp, TRUE, FALSE),
+#          tetracycline = tetra_interp) |>
+#   select(-c(2:15)) |>
+#   mutate(num_resist = across(2:12) %>% rowSums,
+#          mdr = ifelse(num_resist >= 3, TRUE, FALSE))
+```
+
+Metadata for E. coli isolates
+
+```{r}
+# ecoli_metadata_2018_1 <- ecoli_metadata_2018 |>
+#   clean_names() |>
+#   mutate_if(is.character, tolower) |>
+#   select(accession_no, meat_type, store_name, address) |>
+#   rename(site_accession = accession_no)
+# 
+# ecoli_metadata_2019_1 <- ecoli_metadata_2019 |>
+#   clean_names() |>
+#   mutate_if(is.character, tolower) |>
+#   select(accession_no, meat_type, store_name, address) |>
+#   rename(site_accession = accession_no)
+# 
+# ecoli_metadata_all <- rbind(ecoli_metadata_2018_1, ecoli_metadata_2019_1)
+```
+
+Full E. coli dataset
+
+```{r}
+# ecoli <- ecoli_isolates2 |>
+#   left_join(ecoli_metadata_all)
+# 
+# # fwrite(ecoli, "ecoli.csv")
+# rm(list=ls(pattern="^ecoli_"))
+```
+
+# **Complete data with zip codes**
+
+```{r}
+full1 <- salmonella |>
+  mutate(species = "salmonella") |>
+  bind_rows(ecoli |> mutate(species = "e. coli")) |>
+  relocate(species, .after = 1)
+
+full1 |>
+  tabyl(species, mdr) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages() |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  adorn_title()
+```
+
+```{r}
+zips_pct_mdr <- full1 |>
+  group_by(zip_code) |>
+  add_count(zip_code) |>
+  mutate(avg_mdr = round(mean(mdr) * 100)) |>
+  ungroup() |>
+  select(zip_code, n, avg_mdr) |>
+  distinct() |>
+  filter(n > 5) |>
+  left_join(zip_county |> rename(zip_code = zip))
+```
+
+
+
+
+
+
+
+
+
