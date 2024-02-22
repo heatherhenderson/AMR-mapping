@@ -142,29 +142,50 @@ enterobacterales_all_final |>
 ```{r}
 entero_isolates_2014_2023 <- readRDS("Y:/entero_isolates_2014_2023.rds")
 zip_county <- read_excel("J:/ID/AMR_map_van_Duin/nc_zip_county.xlsx", col_types = c("text", "text", "text"))
-counties <- zip_county |> select(county_prop) |> distinct()
+county_pop <- read_excel("J:/ID/AMR_map_van_Duin/nc_pop_by_county_yr.xlsx")
+names(entero_isolates_2014_2023)
+
+counties <- zip_county |> 
+  select(county_prop) |> 
+  distinct() |>
+  dplyr::rename(county = county_prop) |>
+  left_join(county_pop |> select(county, pop2019))
 
 df <- entero_isolates_2014_2023 |>
-  select(pat_deid, isolate_id, zip_code, mdr) |>
+  select(pat_deid, isolate_id, birth_date, gender, race_recode, result_date, culture_year, isolate_source, organism_name, zip_code, mdr) |>
   distinct() |>
+  mutate(age = floor(as.numeric(result_date - birth_date) / 365.25)) |>
   left_join(zip_county) |>
-  filter(!is.na(county_prop))
+  filter(!is.na(county_prop)) |>
+  dplyr::rename(county = county_prop)
 
-df1 <- df |>
-  add_count(county_prop, mdr) |>
-  add_count(county_prop) |>
-  select(mdr, county_prop, n, nn) |>
-  distinct()
-
-df2 <- df1 |>
+df_county <- df |>
+  add_count(county, mdr) |>
+  add_count(county) |>
+  select(mdr, county, n, nn) |>
+  distinct() |>
   filter(nn >= 10,
          mdr) |>
   right_join(counties) |>
   mutate(pct_mdr = round(n / nn * 100),
+         pct_mdr = ifelse(is.na(pct_mdr), 0, pct_mdr),
+         pct_isolates_pop = round(nn / pop2019 * 100)) |>
+  select(-mdr)
+
+df_zip <- df |>
+  add_count(zip_code, mdr) |>
+  add_count(zip_code) |>
+  select(mdr, zip_code, n, nn) |>
+  distinct() |>
+  filter(nn >= 10,
+         mdr) |>
+  right_join(zip_county) |>
+  mutate(pct_mdr = round(n / nn * 100),
          pct_mdr = ifelse(is.na(pct_mdr), 0, pct_mdr)) |>
   select(-mdr)
 
-fwrite(df2, "enterobacterales_mdr.csv")
+# fwrite(df_county, "J:/ID/AMR_map_van_Duin/enterobacterales_mdr.csv")
+# fwrite(df_zip, "J:/ID/AMR_map_van_Duin/enterobacterales_mdr_zip.csv")
 ```
 
 
