@@ -1,0 +1,139 @@
+---
+title: "Staphylococcus aureus"
+author: "Heather Henderson"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+format: html
+self-contained: true
+toc: true
+toc-depth: 2
+editor: visual
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(warning = FALSE, message = FALSE, error = FALSE, eval = TRUE, tidy = TRUE, cache = FALSE)
+```
+
+```{r libraries}
+packages <- function(x){
+  for(i in x){
+     if(!require(i, character.only = TRUE)){
+      install.packages(i, dependencies = TRUE)
+       library(i, character.only = TRUE)
+    }
+  }
+}
+packages(c("readr", "readxl", "haven", "tidyverse" , "data.table" , "naniar", "rockchalk", "lubridate", "kableExtra", "DT", "formatR", "zoo", "binom", "plotly", "janitor", "sjlabelled", "Hmisc", "rms", "aod", "sandwich", "lmtest", "tableone", "broom", "gmodels", "arsenal", "investr", "RColorBrewer", "lessR"))
+```
+
+# Raw data files
+
+```{r raw data files}
+options(scipen=999)
+setwd("C:/Users/henderh/Desktop/amr_proj/")
+# Read in raw data
+df_entero <- read_rds("//ad.unc.edu/med/tracs/Groups/Research/CDWH/Van Duin_David_IRB23-2326/enterococcus.rds")
+zip_county <- read_excel("J:/ID/AMR_map_van_Duin/nc_zip_county.xlsx", col_types = c("text", "text", "text"))
+zip_ses <- read_excel("J:/ID/AMR_map_van_Duin/zip_ses.xlsx", col_types = c("text", "numeric", "numeric"))
+```
+
+```{r}
+df1 <- df_entero |>
+  filter(antibiotic == "vancomycin") |>
+  select(isolate_id, pat_deid, culture_year, organism_name, nonsusceptible, zip_code) |>
+  left_join(zip_county |> select(-county_cap)) |>
+  filter(!is.na(county_prop)) |>
+  left_join(zip_ses) |>
+  mutate(vre = ifelse(nonsusceptible, TRUE, FALSE),
+         ses_quar = ntile(sum,4),
+         ses_quar = factor(ses_quar, levels = c(1,2,3,4), labels = c("high", "med-high", "med-low", "low"))) |>
+  filter(!is.na(ses_quar))
+
+df1 |>
+  tabyl(ses_quar, nonsusceptible) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages() |>
+  adorn_pct_formatting() |>
+  adorn_ns()
+```
+
+# Datasets for mapping
+
+```{r}
+df_entero_county <- df1 |>
+  left_join(zip_county) |>
+  add_count(vre, county_prop) |>
+  add_count(county_prop) |>
+  mutate(pct_vre = round(n / nn * 100)) |>
+  filter(vre,
+         nn >= 10,
+         !is.na(county_prop)) |>
+  select(county_prop, n, nn, pct_vre) |>
+  distinct()
+
+df_entero_zip <- df1 |>
+  left_join(zip_county) |>
+  add_count(vre, zip_code) |>
+  add_count(zip_code) |>
+  mutate(pct_vre = round(n / nn * 100)) |>
+  filter(vre,
+         nn >= 10,
+         !is.na(zip_code)) |>
+  select(county_prop, zip_code, n, nn, pct_vre) |>
+  distinct() |>
+  right_join(zip_county |> select(-county_cap)) |> 
+  mutate(pct_vre = ifelse(is.na(pct_vre), 0, pct_vre))
+
+# fwrite(df_entero_county, "J:/ID/AMR_map_van_Duin/df_entero_county.csv")
+# fwrite(df_entero_zip, "J:/ID/AMR_map_van_Duin/df_entero_zip.csv")
+
+n_distinct(df_entero$pat_deid)
+n_distinct(df_entero$isolate_id)
+```
+
+# SES analysis
+### Five-year moving average prevalence of VRE
+
+```{r yearly moving average mdr}
+roll_mean_num <- df1 |>
+  group_by(vre, culture_year, ses_quar) |>
+  summarise(n = n()) |>
+  filter(vre) |>
+  group_by(ses_quar) |>
+  arrange(culture_year, .by_group = TRUE) |>
+  mutate(num = rollmean(n, k = 5, fill = NA)) |>
+  ungroup() |>
+  select(-n)
+
+roll_mean_den <- df1 |>
+  group_by(culture_year, ses_quar) |>
+  summarise(n = n()) |>
+  group_by(ses_quar) |>
+  arrange(culture_year, .by_group = TRUE) |>
+  mutate(den = rollmean(n, k = 5, fill = NA)) |>
+  ungroup() |>
+  select(-n)
+
+roll_mean <- roll_mean_num |>
+  left_join(roll_mean_den) |>
+  mutate(roll_mean = round(num / den * 100))
+```
+
+```{r}
+chart <- ggplot(roll_mean, aes(x = culture_year, y = roll_mean, colour = ses_quar)) +
+  geom_point(aes(group = ses_quar), size = 1.7) +
+  geom_smooth(aes(group = ses_quar), method = "loess", se = FALSE, size = 0.75) +
+  theme(panel.border = element_blank(),  
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  panel.background = element_blank(),
+  axis.line = element_line(color = "grey"),
+  text = element_text(size = 12), 
+  legend.position = "top", 
+  legend.key = element_blank()) +
+  ylim(0, 20) +
+  xlim(2016, 2021) +
+  xlab("Calendar year") +
+  ylab("Percent VRE")
+chart
+```
