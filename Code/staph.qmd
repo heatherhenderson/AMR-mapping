@@ -39,7 +39,7 @@ zip_ses <- read_excel("J:/ID/AMR_map_van_Duin/zip_ses.xlsx", col_types = c("text
 
 ```{r}
 df1 <- df_staph |>
-  select(isolate_id, pat_deid, culture_year, organism_name2, zip_code) |>
+  select(isolate_id, pat_deid, culture_year, mrsa, zip_code) |>
   left_join(zip_county |> select(-county_cap)) |>
   filter(!is.na(county_prop)) |>
   left_join(zip_ses) |>
@@ -56,27 +56,27 @@ df1 |>
 ```{r}
 df_staph_county <- df_staph |>
   left_join(zip_county) |>
-  select(organism_name2, county_prop) |>
-  add_count(organism_name2, county_prop) |>
+  select(mrsa, county_prop) |>
+  add_count(mrsa, county_prop) |>
   add_count(county_prop) |>
   distinct() |>
   mutate(pct_mrsa = round(n / nn * 100)) |>
-  filter(organism_name2 == "mrsa",
+  filter(mrsa,
          nn >= 10,
          !is.na(county_prop))
 
 df_staph_zip <- df_staph |>
   left_join(zip_county) |>
-  select(organism_name2, county_prop, zip_code) |>
-  add_count(organism_name2, zip_code) |>
+  select(mrsa, county_prop, zip_code) |>
+  add_count(mrsa, zip_code) |>
   add_count(zip_code) |>
   distinct() |>
   mutate(pct_mrsa = round(n / nn * 100)) |>
-  filter(organism_name2 == "mrsa",
+  filter(mrsa,
          nn >= 10,
          !is.na(zip_code)) |>
   right_join(zip_county) |> 
-  select(-c(county_cap, organism_name2)) |>
+  select(-c(county_cap, mrsa)) |>
   mutate(pct_mrsa = ifelse(is.na(pct_mrsa), 0, pct_mrsa))
 
 # fwrite(df_staph_county, "J:/ID/AMR_map_van_Duin/df_staph_county.csv")
@@ -88,13 +88,14 @@ n_distinct(df_staph$isolate_id)
 ```
 
 # SES analysis
+
 ### **Five-year moving average prevalence of MRSA**
 
 ```{r yearly moving average mdr}
 roll_mean_num <- df1 |>
-  group_by(organism_name2, culture_year, ses_quar) |>
+  group_by(mrsa, culture_year, ses_quar) |>
   summarise(n = n()) |>
-  filter(organism_name2 == "mrsa") |>
+  filter(mrsa) |>
   group_by(ses_quar) |>
   arrange(culture_year, .by_group = TRUE) |>
   mutate(num = rollmean(n, k = 5, fill = NA)) |>
@@ -130,15 +131,12 @@ chart <- ggplot(roll_mean, aes(x = culture_year, y = roll_mean, colour = ses_qua
   ylim(0, 50) +
   xlim(2016, 2021) +
   xlab("Calendar year") +
-  ylab("Percent MRSA")
+  ylab("Percent MRSA") +
+  scale_color_manual(name = "",
+                        breaks = c("high", "med-high", "med-low", "low"),
+                        labels = c("High", "Medium high", "Medium low", "Low"),
+                     values = c("darkred", "darkblue", "darkgreen", "darkgrey"))
 chart
+
+# ggsave(filename = "J:/ID/AMR_map_van_Duin/species maps/mrsa/mrsa_ses.tiff", plot = chart, device="tiff", dpi=300, width = 5, height = 4)
 ```
-
-
-
-
-
-
-
-
-

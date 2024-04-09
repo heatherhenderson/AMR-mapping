@@ -95,37 +95,36 @@ n_distinct(df$encounter_deid)
 ```{r}
 df1 <- df |>
   dplyr::rename(antibiotic_old = antibiotic) |> 
-  left_join(antibiotic_names) |>
-  # Standardize antibiotic names
-  left_join(antibiotic_classes |> select(antibiotic_name, antibiotic_class), by = c("antibiotic" = "antibiotic_name")) |>
-  mutate(antibiotic_old = str_replace(antibiotic_old, " mic|screening plate|other|screen", ""),
+  # Standardize and organism antibiotic names
+  mutate(antibiotic_old = str_replace(antibiotic_old, " mic|other|screen", ""),
          antibiotic_old = str_squish(antibiotic_old),
+         antibiotic_old = ifelse(str_detect(antibiotic_old, "gentamicin"), "gentamicin", antibiotic_old),
+         antibiotic_old = ifelse(str_detect(antibiotic_old, "vancomycin"), "vancomycin", antibiotic_old),
          organism_name = str_replace(organism_name, "-", " "),
          organism_name = str_replace(organism_name, "suceptible", "susceptible"),
-         organism_name = str_replace_all(organism_name, "_|,|presumptive|probable|smooth|rough|mucoid|carbapenem|by|id |screen|mdr|coagulase|negative|previously|pan|pcr|thymine|dependent| species| genus", ""),
+         organism_name = str_replace(organism_name, "baumanii", "baumannii"),
+         organism_name = str_replace_all(organism_name, "_|,|presumptive|probable|smooth|rough|mucoid|carbapenem|by|id |screen|mdr|coagulase|negative|previously|pan|pcr|thymine|dependent| species| genus|\\(.*\\)|group|complex", ""),
          organism_name = str_remove(organism_name, "thymidine|ssp.*"),
-         organism_name = str_squish(organism_name))
-
-species <- df1 |>
-  select(organism_name) |>
-  distinct()
+         organism_name = str_squish(organism_name)) |>
+  filter(!str_detect(organism_name, "strep")) |>
+  left_join(antibiotic_names) |>
+  left_join(antibiotic_classes |> select(antibiotic_name, antibiotic_class), by = c("antibiotic" = "antibiotic_name"))
 ```
 
 ```{r}
-df2 <- df1 |>
-  left_join(intrinsic_resistance |> mutate(intrinsic_resistance = TRUE)) |> 
-  # Remove entries in antibiotic_old that are not antibiotics (e.g. maldi, esbl), classes with only 1 observation, intrinsically resistant organism-drug pairs, results for 1st gen cephalosporins
-  filter(!is.na(antibiotic) & !susceptibility %in% c("indeterminate", "no interpretation", "test performed", "test not performed", "bacterial identification performed", "not applicable") & !antibiotic_class %in% c("fosfomycin", "glycopeptide", "lipopeptide", "oxazolidinone") & is.na(intrinsic_resistance),
+df2 <- df1 |> 
+  # Remove entries in antibiotic_old that are not antibiotics (e.g. maldi, esbl), results for 1st gen cephalosporins, non-applicable susceptibility results and organism names
+  filter(!is.na(antibiotic) & !susceptibility %in% c("indeterminate", "no interpretation", "test performed", "test not performed", "bacterial identification performed", "not applicable"),
          antibiotic_class != "cephalosporin_1st_gen", 
          !is.na(organism_name)) |> 
   # Define nonsusceptible
   mutate(nonsusceptible = ifelse(susceptibility %in% c("susceptible", "susceptible-dose dependent"), FALSE, TRUE)) |> 
-  select(-c(encounter_deid, antibiotic_old, susceptibility, intrinsic_resistance))  |>
+  select(-c(encounter_deid, antibiotic_old, susceptibility))  |>
   # Create unique isolate ID
-  unite(isolate_id, pat_deid, organism_name, result_date, remove = FALSE) 
+  unite(isolate_id, pat_deid, organism_name, result_date, remove = FALSE)
 ```
 
-### **Recode specimen source, select isolates from blood -\> respiratory -\> urine -\> other**
+## **Recode specimen source, select isolates from blood -\> respiratory -\> urine -\> other**
 
 ```{r}
 # Get specimen types corresponding to respiratory and other
@@ -139,9 +138,11 @@ src_other <- df2 |>
   filter(!specimen_type %in% src_resp$specimen_type,
          !specimen_type %in% c("blood", "urine")) |>
   unique()
+```
 
+```{r}
+# Join demographic and isolate data
 df3 <- demo |> 
-  select(-c(race, ethnicity)) |>
   inner_join(df2) |>
   mutate(age = floor(as.numeric(result_date - birth_date) / 365.25),
          isolate_source = case_when(specimen_type == "blood" ~ specimen_type,
@@ -149,7 +150,6 @@ df3 <- demo |>
                                     specimen_type %in% src_resp$specimen_type ~ "resp",
                                     specimen_type %in% src_other$specimen_type ~ "other"),
          isolate_source = factor(isolate_source, levels = c("urine", "blood", "resp", "other"))) |>
-  select(-c(specimen_source, specimen_type))|>
   group_by(pat_deid, organism_name) |>
   # Select first isolate of given species per patient
   slice_min(result_date) |> 
@@ -159,29 +159,34 @@ df3 <- demo |>
   group_by(isolate_id) |>
   filter(source_order == min(source_order)) |>
   ungroup() |>
-  select(-c(order_date, source_order)) |>
+  select(-c(original_file_mrn, race, ethnicity, order_date, source_order, specimen_source, specimen_type)) |>
+  relocate(isolate_id, .before = 1) |>
   relocate(age, .before = 4) |>
   distinct()
 
 rm(src_resp, src_other)
 ```
 
-### **Staphylococcus aureus**
+```{r}
+df3 |>
+  select(isolate_id, organism_name) |>
+  distinct() |>
+  tabyl(organism_name) |>
+  adorn_totals()
+```
+
+# **Staphylococcus aureus**
 
 ```{r}
 df_staph <- df3 |>
   filter(str_detect(organism_name, "aureus"),
          antibiotic == "oxacillin") |>
-  mutate(organism_name = str_remove(organism_name, " group"),
-         organism_name2 = str_replace_all(organism_name, "methicillin |oxacillin |resistant |susceptible ", ""),
-         organism_name2 = case_when(str_detect(organism_name, "aureus") & nonsusceptible ~ "mrsa",
-                                    str_detect(organism_name, "aureus") & !nonsusceptible ~ "mssa",
-                                    TRUE ~ organism_name)) |>
+  mutate(mrsa = ifelse(nonsusceptible, TRUE, FALSE)) |>
   select(-c(antibiotic, antibiotic_class, nonsusceptible, department_name)) |>
   distinct()
 
 df_staph |> 
-  tabyl(organism_name2) |>
+  tabyl(mrsa) |>
   adorn_totals("row") |>
   adorn_pct_formatting() |>
   kable("html", caption = "Staph oxacillin results") |>
@@ -189,4 +194,53 @@ df_staph |>
 
 # write_rds(df_staph, "//ad.unc.edu/med/tracs/Groups/Research/CDWH/Van Duin_David_IRB23-2326/staph_aureus.rds")
 ```
+
+# **Enterococcus**
+
+```{r}
+df_entero <- df3 |>
+  filter(str_detect(organism_name, "enterococcus"),
+         antibiotic %in% c("ampicillin", "vancomycin")) |>
+  mutate(organism_name = str_remove(organism_name, " group"),
+         organism_name2 = str_replace_all(organism_name, "vancomycin|resistant|susceptible", ""),
+         organism_name2 = str_squish(organism_name2)) |>
+  select(-c(department_name)) |>
+  distinct() |>
+  left_join(intrinsic_resistance |> mutate(intrinsic_resistance = TRUE)) |>
+  filter(is.na(intrinsic_resistance)) |>
+  select(-intrinsic_resistance)
+
+df_entero |> 
+  tabyl(organism_name2, nonsusceptible, antibiotic) |>
+  adorn_totals("row") |>
+  adorn_percentages() |>
+  adorn_pct_formatting() |>
+  adorn_ns()
+
+# write_rds(df_entero, "//ad.unc.edu/med/tracs/Groups/Research/CDWH/Van Duin_David_IRB23-2326/enterococcus.rds")
+```
+
+# **Pseudomonas**
+
+```{r}
+df_pseud <- df3 |>
+  filter(str_detect(organism_name, "pseudomonas")) |>
+  mutate(organism_name = str_replace_all(organism_name, "resistant", ""),
+         organism_name = str_squish(organism_name)) |>
+  select(-c(department_name)) |>
+  distinct() |>
+  left_join(intrinsic_resistance |> mutate(intrinsic_resistance = TRUE)) |>
+  filter(is.na(intrinsic_resistance)) |>
+  select(-intrinsic_resistance)
+
+df_pseud |>
+  select(isolate_id, organism_name) |>
+  distinct() |>
+  tabyl(organism_name) |>
+  adorn_totals()
+
+# write_rds(df_pseud, "//ad.unc.edu/med/tracs/Groups/Research/CDWH/Van Duin_David_IRB23-2326/pseudomonas.rds")
+```
+
+
 
