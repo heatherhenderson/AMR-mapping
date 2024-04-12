@@ -1,0 +1,413 @@
+---
+title: "AMR Enterobacterales"
+author: "Henderson, Heather"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+format: html
+self-contained: true
+toc: true
+toc-depth: 2
+editor: visual
+---
+
+```{r}
+#| label: load-packages
+#| echo: false
+#| output: false
+packages <- function(x) {
+  for (i in x) {
+    if (!require(i, character.only = TRUE)) {
+      install.packages(i, dependencies = TRUE)
+      library(i, character.only = TRUE)
+    }
+  }
+}
+packages(c("haven", "readxl", "readr", "tidyverse" , "data.table" , "naniar", "rockchalk", "lubridate", "kableExtra", "DT", "formatR", "zoo", "binom", "plotly", "janitor", "sjlabelled", "Hmisc", "rms", "aod", "sandwich", "lmtest", "tableone", "broom", "pooling", "glmnet", "caret", "class", "investr", "creditmodel", "furniture", "arsenal", "RColorBrewer", "survminer", "survival", "cmprsk", "condSURV", "tidycmprsk", "gtsummary", "ggsurvfit"))
+```
+
+```{r}
+#| echo: false
+setwd("Y:/amr_mapping_rproj")
+culture_data_enterobact_2014_2023 <- read_rds("data files/entero_isolates_2014_2023_april2023.rds")
+```
+
+```{r}
+classes <- c("aminoglycoside", "carbapenem", "cephalosporin_2nd_gen", "cephalosporin_3rd_gen", "penicillins", "penicillins_bli", "quinolone", "sulfonamide")
+
+isolates1 <- culture_data_enterobact_2014_2023 |>
+  mutate(age = floor(as.numeric((order_date - birth_date) / 365.25)),
+         ethnicity_recode = ifelse((is.na(ethnicity_recode)|ethnicity_recode == "unknown"), "other/unknown", ethnicity_recode),
+         race_eth = ifelse(ethnicity_recode == "hispanic", "hispanic", race_recode),
+         isolate_source_factor = factor(isolate_source, levels = c("urine", "blood", "resp", "other"))) |>
+  select(-c(race_recode, isolate_source)) |>
+  filter(culture_year %in% c(2014:2018))
+```
+
+```{r}
+# Select first isolate per patient, add status at 1 year
+isolates2 <- isolates1 |>
+  slice_min(order_date, by = pat_deid) |>
+  slice_min(isolate_id, by = pat_deid) |>
+  mutate(t = as.numeric(death_date - order_date),
+         status = ifelse(!is.na(death_date) & t <= 365, 2, 1),
+         status_f = factor(status, labels = c("Survived", "Died")))
+
+isolates3 <- isolates2 |>
+  group_by(pat_deid) |>
+  mutate(n = sum(nonsusceptible),
+         any_resistance = ifelse(n == 0, FALSE, TRUE)) |> # Indicator for any resistance
+  ungroup() |>
+  select(pat_deid, age, gender, isolate_source_factor, mdr, any_resistance, status_f) |>
+  distinct()
+```
+
+```{r}
+isolates4 <- isolates2 |>
+  dplyr::rename(t0 = order_date) |> # Set start of follow-up
+  mutate(tf = as.Date(ifelse(status == 2, death_date, as.Date("2020-12-31"))), # Set end of follow-up
+         time = as.numeric(tf - t0),
+         time = ifelse(time < 0, 0, time)) |>
+  select(pat_deid, age, gender, race_eth, isolate_source_factor, antibiotic_class, nonsusceptible, mdr, status, status_f, t0, tf, time) |> 
+  distinct()
+
+isolates5 <- isolates4 |>
+  filter(str_detect(antibiotic_class, pattern = c("3rd|quin|amino"))) |> # Classes of interest
+  add_count(pat_deid, antibiotic_class) |>
+  filter(n == 1 | n > 1 & nonsusceptible) |> # Remove duplicates if both susceptible and resistant to drugs in a class - select resistant
+  pivot_wider(values_from = nonsusceptible, names_from = antibiotic_class, values_fill = FALSE) |> # Column for each class
+  mutate(res_3gceph_quin = ifelse(cephalosporin_3rd_gen & quinolone, TRUE, FALSE), # Indicators for combinations of resistance
+         res_3gceph_quin_amino = ifelse(cephalosporin_3rd_gen & quinolone & aminoglycoside, TRUE, FALSE)) |>
+  dplyr::rename(res_3gceph = cephalosporin_3rd_gen,
+         res_quin = quinolone,
+         res_amino = aminoglycoside) |>
+  select(-c(n, cephalosporin_3rd_gen_bli)) |>
+  distinct()
+
+n_distinct(isolates5$pat_deid)
+```
+
+```{r}
+# Aminoglycosides
+isolates_amino <- isolates5 |>
+  select(-c(res_3gceph, res_quin, res_3gceph_quin, res_3gceph_quin_amino)) |>
+  distinct() |>
+  add_count(pat_deid) |>
+  filter(n == 1 | n > 1 & res_amino) |>
+  select(-n)
+
+# Quinolones
+isolates_quin <- isolates5 |>
+  select(-c(res_3gceph, res_amino, res_3gceph_quin, res_3gceph_quin_amino)) |>
+  distinct() |>
+  add_count(pat_deid) |>
+  filter(n == 1 | n > 1 & res_quin) |>
+  select(-n)
+
+# Amp-sulbactam
+isolates_amp_sul <- isolates2 |>
+  dplyr::rename(t0 = order_date) |> # Set start of follow-up
+  mutate(tf = as.Date(ifelse(status == 2, death_date, as.Date("2020-12-31"))), # Set end of follow-up
+         time = as.numeric(tf - t0),
+         time = ifelse(time < 0, 0, time)) |>
+  select(pat_deid, antibiotic, age, antibiotic_class, nonsusceptible, mdr, status, status_f, t0, tf, time) |> 
+  distinct() |>
+  mutate(res_amp_sul = ifelse(antibiotic == "ampicillin sulbactam", TRUE, FALSE)) |>
+  select(pat_deid, res_amp_sul, t0, tf, time, status, status_f) |>
+  distinct() |>
+  add_count(pat_deid) |>
+  filter(n == 1 | n > 1 & res_amp_sul) |>
+  select(-n)
+
+# 3rd gen cephs and combos, rejoin aminoglycosides and quinolones to eliminate duplicates
+isolates6 <- isolates5 |>
+  select(-c(res_quin, res_amino)) |>
+  distinct() |>
+  # Add indicator for any 1 of 3 outcomes of interest
+  mutate(dedup = ifelse(res_3gceph|res_3gceph_quin|res_3gceph_quin_amino, TRUE, FALSE)) |> 
+  add_count(pat_deid) |>
+  filter(n == 1 | n > 1 & dedup) |>
+  select(-c(n, dedup)) |>
+  left_join(isolates_amino) |>
+  left_join(isolates_quin) |>
+  left_join(isolates_amp_sul)
+
+rm(isolates_amino, isolates_quin)
+```
+
+# **Table 1**
+
+```{r}
+tab1 <- isolates6 |>
+  mutate(age_grp = case_when(age <=40 ~ 1,
+                             age > 40 & age <= 60 ~ 2,
+                             age > 60 & age <= 75 ~ 3,
+                             TRUE ~ 4),
+         age_grp = factor(age_grp, labels = c("18-40", "41-60", "61-75", ">75")))
+
+vars <- c("age_grp", "gender", "race_eth", "isolate_source_factor", "status_f")
+factorVars <- c("age_grp", "gender", "race_eth", "isolate_source_factor", "status_f")
+tableOne <- CreateTableOne(vars = vars, data = tab1, factorVars = factorVars)
+tbl <- (print(tableOne, nonnormal = TRUE, quote = FALSE, noSpaces = TRUE, printToggle = FALSE, showAllLevels = TRUE))
+tbl |> 
+  kable("html") |>
+  kable_styling()
+```
+
+# **Mortality**
+
+## **Frequencies**
+
+```{r}
+isolates3 |>
+  tabyl(mdr, status_f) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages("row") |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  kable("html", caption = "1-year all-cause mortality and multidrug-resistance") |>
+  kable_styling()
+
+isolates3 |>
+  tabyl(any_resistance, status_f) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages("row") |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  kable("html", caption = "1-year all-cause mortality and resistance to any antibiotic class") |>
+  kable_styling()
+
+isolates6 |> 
+  tabyl(res_amp_sul, status_f) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages("row") |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  kable("html", caption = "1-year all-cause mortality and resistance to ampicillin-sulbactam") |>
+  kable_styling()
+
+isolates6 |> 
+  tabyl(res_amino, status_f) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages("row") |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  kable("html", caption = "1-year all-cause mortality and resistance to aminoglycosides") |>
+  kable_styling()
+
+isolates6 |> 
+  tabyl(res_3gceph, status_f) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages("row") |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  kable("html", caption = "1-year all-cause mortality and resistance to 3rd gen cephalosporins") |>
+  kable_styling()
+
+isolates6 |> 
+  tabyl(res_quin, status_f) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages("row") |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  kable("html", caption = "1-year all-cause mortality and resistance to quinolones") |>
+  kable_styling()
+
+isolates6 |> 
+  tabyl(res_3gceph_quin, status_f) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages("row") |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  kable("html", caption = "1-year all-cause mortality and resistance to 3rd gen cephalosporins & quinolones") |>
+  kable_styling()
+
+isolates6 |> 
+  tabyl(res_3gceph_quin_amino, status_f) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages("row") |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  kable("html", caption = "1-year all-cause mortality and resistance to 3rd gen cephalosporins, quinolones, & aminoglycosides") |>
+  kable_styling()
+```
+
+## **Survival curves**
+
+```{r}
+fit1 <- survfit(Surv(time, status) ~ res_3gceph, data = isolates6)
+
+km_curve_res_3gceph <- ggsurvplot(fit1,
+                       title = "3rd generation cephalosporins",
+                       censor = FALSE,
+                       conf.int = TRUE,
+                       risk.table = TRUE,
+                       pval = TRUE,
+                       tables.theme = theme_cleantable(),
+                       palette = "grey",
+                       xlim = c(1, 365),
+                       break.x.by = 60,
+                       legend = c(0.8, 0.2),
+                       legend.title = "",
+                       risk.table.y.text.col = FALSE,
+                       risk.table.height = 0.2,
+                       risk.table.fontsize = 4,
+                       legend.labs = c("Susceptible", "Nonsuceptible"))
+
+km_curve_res_3gceph <- ggpar(km_curve_res_3gceph, 
+      font.main = c(14, "bold"),
+      font.x = c(14, "bold"),
+      font.y = c(14, "bold"),
+      font.caption = c(12, "bold"), 
+      font.legend = c(12, "bold"),
+      ticks = FALSE,
+      xlab = "Days")
+
+km_curve_res_3gceph
+```
+
+```{r}
+fit2 <- survfit(Surv(time, status) ~ res_quin, data = isolates6)
+
+km_curve_res_quin <- ggsurvplot(fit2,
+                       title = "Quinolones",
+                       censor = FALSE,
+                       conf.int = TRUE,
+                       risk.table = TRUE,
+                       pval = TRUE,
+                       tables.theme = theme_cleantable(),
+                       palette = "grey",
+                       xlim = c(1, 365),
+                       break.x.by = 60,
+                       legend = c(0.8, 0.2),
+                       legend.title = "",
+                       risk.table.y.text.col = FALSE,
+                       risk.table.height = 0.2,
+                       risk.table.fontsize = 4,
+                       legend.labs = c("Susceptible", "Nonsuceptible"))
+
+km_curve_res_quin <- ggpar(km_curve_res_quin, 
+      font.main = c(14, "bold"),
+      font.x = c(14, "bold"),
+      font.y = c(14, "bold"),
+      font.caption = c(12, "bold"), 
+      font.legend = c(12, "bold"),
+      ticks = FALSE,
+      xlab = "Days")
+
+km_curve_res_quin
+```
+
+```{r}
+fit3 <- survfit(Surv(time, status) ~ res_3gceph_quin, data = isolates6)
+
+km_curve_res_3gceph_quin <- ggsurvplot(fit3,
+                       title = "3rd generation cephalosporins & quinolones",
+                       censor = FALSE,
+                       conf.int = TRUE,
+                       risk.table = TRUE,
+                       pval = TRUE,
+                       tables.theme = theme_cleantable(),
+                       palette = "grey",
+                       xlim = c(1, 365),
+                       break.x.by = 60,
+                       legend = c(0.8, 0.2),
+                       legend.title = "",
+                       risk.table.y.text.col = FALSE,
+                       risk.table.height = 0.2,
+                       risk.table.fontsize = 4,
+                       legend.labs = c("Susceptible", "Nonsuceptible"))
+
+km_curve_res_3gceph_quin <- ggpar(km_curve_res_3gceph_quin, 
+      font.main = c(14, "bold"),
+      font.x = c(14, "bold"),
+      font.y = c(14, "bold"),
+      font.caption = c(12, "bold"), 
+      font.legend = c(12, "bold"),
+      ticks = FALSE,
+      xlab = "Days")
+
+km_curve_res_3gceph_quin
+```
+
+```{r}
+fit4 <- survfit(Surv(time, status) ~ mdr, data = isolates6)
+
+km_curve_mdr <- ggsurvplot(fit4,
+                       title = "Multidrug-resistance",
+                       censor = FALSE,
+                       conf.int = TRUE,
+                       risk.table = TRUE,
+                       pval = TRUE,
+                       tables.theme = theme_cleantable(),
+                       palette = c("#E7B800", "#2E9FDF"),
+                       xlim = c(1, 365),
+                       break.x.by = 60,
+                       legend = "none",
+                       tables.col = "strata",
+                       risk.table.fontsize = 3,
+                       legend.labs = c("Susceptible", "Nonsuceptible"),
+                       risk.table.y.text = FALSE)
+km_curve_mdr
+```
+
+## **Hazard ratios**
+
+```{r}
+classes2 <- classes[c(1, 5, 4, 7)]
+var_names <- c("class", "hazard_ratio", "lower_ci", "upper_ci")
+
+abx_class_hr_func <- function(filter_classes){
+  hr_list <- data.frame() # Empty dataframe to store results
+
+  for (abx_class in filter_classes) {
+    filtered_data <- isolates4[isolates4$antibiotic_class == abx_class, ]
+    cox_model <- coxph(Surv(time, status) ~ nonsusceptible + rcs(age, 5), filtered_data) # Run model
+    estimate <- summary(cox_model)$coefficients[1,1] # Extract estimate name from model results
+    results <- c(abx_class, estimate, confint(cox_model)[1,]) # Extract confidence interval name from model results and add to estimate
+    hr_list <- rbind(hr_list, results) # Add results to dataframe
+  }
+  return(hr_list)
+}
+# Get results for MDR and combinations
+fit_mdr <- coxph(Surv(time, status) ~ mdr + rcs(age,5), data = isolates6)
+results_mdr <- c("mdr", summary(fit_mdr)$coefficients[1,1], confint(fit_mdr)[1,])
+
+fit_ceph_quin <- coxph(Surv(time, status) ~ res_3gceph_quin + rcs(age,5), data = isolates6)
+results_ceph_quin <- c("3rd gen ceph + quinolone", summary(fit_ceph_quin)$coefficients[1,1], confint(fit_ceph_quin)[1,])
+
+fit_amp_sul <- coxph(Surv(time, status) ~ res_amp_sul + rcs(age,5), data = isolates6)
+results_amp_sul <- c("ampicillin sulbactam", summary(fit_amp_sul)$coefficients[1,1], confint(fit_amp_sul)[1,])
+
+hazard_ratios_class <- abx_class_hr_func(classes2) |>
+  setNames(var_names) |>
+  rbind(results_amp_sul) |>
+  rbind(results_mdr) |>
+  rbind(results_ceph_quin) |>
+  mutate_at(c(2:4), as.numeric) |>
+  mutate_at(c(2:4), exp) |>
+  mutate_if(is.numeric, round, digits=2)
+
+hazard_ratios_class |>
+  kable("html", caption = "Age-adjusted hazard ratios for mortality at 1 year") |>
+  kable_styling()
+```
+
+```{r}
+# plots <- list()
+# plots[[1]] <- km_curve_res_3gceph
+# plots[[2]] <- km_curve_res_quin
+# plots[[3]] <- km_curve_res_3gceph_quin
+# 
+# fig <- arrange_ggsurvplots(plots,
+#                            surv.plot.height = 1,
+#                            risk.table.height = 0.3,
+#                            ncol = 3,
+#                            nrow = 1)
+# 
+# grid.draw.ggsurvplot <- function(x){
+#   survminer:::print.ggsurvplot(x, newpage = FALSE)
+# }
+# ggsave("km_curve_res_3gceph.tiff", plot = km_curve_res_3gceph, dpi=300, width = 6, height = 7, units = "in")
+# ggsave("km_curve_res_quin.tiff", plot = km_curve_res_quin, dpi=300, width = 6, height = 7, units = "in")
+# ggsave("km_curve_res_3gceph_quin.tiff", plot = km_curve_res_3gceph_quin, dpi=300, width = 6, height = 7, units = "in")
+```
+
