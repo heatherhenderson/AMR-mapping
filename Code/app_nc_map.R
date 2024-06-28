@@ -15,108 +15,70 @@ ui <- dashboardPage(
   dashboardHeader(title = "Interactive Map of AMR in North Carolina", titleWidth = 400),
   dashboardSidebar(
     sidebarMenu(
-      menuItem("Antimicrobial Resistance", tabName = "amr", icon = icon("bug")),
-      menuItem("Livestock Operations", tabName = "livestock", icon = icon("cow"))
+      menuItem("Map", tabName = "map"),
+      menuItem("Data", tabName = "data")
     ),
-      selectInput("organism", "Select organism", choices = unique(df_isolates$organism)),
-
-      checkboxGroupInput("species", "Choose operation type:", 
-                         choices = c("Swine", "Cattle", "Poultry"),
-                         selected = c("Swine", "Cattle", "Poultry"))
-    ),
-
+    selectInput("organism", "Select organism", choices = unique(df_isolates$organism)),
+    
+    checkboxGroupInput("regulated_operation", "Choose operation type:", 
+                       choices = c("Swine", "Cattle", "Poultry"),
+                       selected = c("Swine", "Cattle", "Poultry")),
+    actionButton("update_map", "Update"),
+    actionButton("data_source", "About the data")
+  ),
+  
   dashboardBody(
     tabItems(
-      tabItem(tabName = "amr",
+      tabItem(tabName = "map",
               fluidRow(
                 box(
-                  title = "Information", status = "primary", solidHeader = TRUE, width = 3,
-                  h5("Data source: UNC Health electronic health record system, years 2014-2023. 
-                   Percentages represent the number of isolates that were resistant divided by the total 
-                   number of isolates, per ZIP code. County names represent the primary county a ZIP code 
-                   is located in. Data are included for ZIP codes with 10 or more isolates.")
+                  title = "AMR Map", status = "primary", solidHeader = TRUE, width = 12,
+                  collapsible = TRUE, leafletOutput("pct_amr_map", height = 800)
                 ),
                 box(
-                  title = "AMR Map", status = "primary", solidHeader = TRUE, width = 8,
-                  collapsible = TRUE, leafletOutput("pct_amr_map", height = 500)
-                ),
+                  textOutput("data_source_text")
+                )
+              )
+      ),
+      
+      tabItem(tabName = "data",
+              fluidRow(
                 box(
-                  title = "AMR data table", status = "primary", solidHeader = TRUE, width = 5,
+                  title = "AMR data table", status = "primary", solidHeader = TRUE, width = 5, height = 500,
                   collapsible = TRUE, DT::dataTableOutput("amr_table")
                 ),
                 box(
-                  title = "AMR histogram", status = "primary", solidHeader = TRUE, width = 5, height = 5,
+                  title = "AMR histogram", status = "primary", solidHeader = TRUE, width = 5, height = 500,
                   collapsible = TRUE, plotOutput("amr_histogram")
-                  )
-                )
-              ),
-
-      tabItem(tabName = "livestock",
+                )),
               fluidRow(
                 box(
-                  title = "Information", status = "primary", solidHeader = TRUE, width = 3,
-                  h5("Data source: NC Department of Agriculture and Consumer Services 
-                    https://www.deq.nc.gov/about/divisions/water-resources/permitting/animal-feeding-operations/animal-facility-map.")
-                ),
-                box(
-                  title = "Livestock Map", status = "primary", solidHeader = TRUE, width = 8,
-                  collapsible = TRUE, leafletOutput("livestock_map", height = 500)
-                ),
-                box(
-                  title = "Livestock data table", status = "primary", solidHeader = TRUE, width = 6,
+                  title = "Livestock data table", status = "primary", solidHeader = TRUE, width = 5, height = 500,
                   collapsible = TRUE, DT::dataTableOutput("livestock_table")
+                ),
+                box(
+                  title = "Livestock density", status = "primary", solidHeader = TRUE, width = 5, height = 500,
+                  collapsible = TRUE, DT::dataTableOutput("livestock_density")
                 )
               )
-      )
+            )
     )
   )
 )
 
 server <- function(input, output, session) {
-  
-  # Filter AMR data by selected organism
+  # Filter data by selected organism
   org_amr <- reactive({
-    df_filtered <- df_isolates %>% filter(organism == input$organism)
-    return(df_filtered)
+    df_isolates %>% filter(organism == input$organism)
   })
   
-  # Render AMR map
-  output$pct_amr_map <- renderLeaflet({
-    bins <- c(0, 10, 20, 30, 40, 50, 100)
-    pal <- colorBin(palette = "OrRd", bins = bins, domain = df_isolates$pct)
-    labels <- sprintf("<strong>%s</strong><br/><strong>%s</strong><br/>%g percent resistant<br/>%g total isolates",
-                      org_amr()$county_prop, org_amr()$zip_code, org_amr()$pct, org_amr()$total) %>%
-      lapply(htmltools::HTML)
-    
-    leaflet(data = org_amr()) %>%
-      addProviderTiles(provider = "CartoDB.Positron") %>%
-      setView(lng = -79.7, lat = 35.3, zoom = 7) %>%
-      addPolygons(data = org_amr(),
-                  label = labels,
-                  stroke = FALSE,
-                  smoothFactor = 0.5,
-                  opacity = 1,
-                  fillOpacity = 0.7,
-                  fillColor = ~ pal(pct),
-                  highlightOptions = highlightOptions(weight = 5,
-                                                      fillOpacity = 1,
-                                                      color = "black",
-                                                      opacity = 1,
-                                                      bringToFront = TRUE)) %>%
-      addLegend("bottomright",
-                pal = pal,
-                values = ~ pct,
-                title = "Percent of isolates resistant",
-                opacity = 0.7)
-  })
-  
-  # Filter livestock data by selected species
+  # Filter data by selected regulated_operation
   filtered_data <- reactive({
-    df_livestock %>% filter(regulated_operation %in% input$species)
+    df_livestock %>% filter(regulated_operation %in% input$regulated_operation)
   })
   
   # Bin counts and create scaled size
-  binned_data <- reactive({
+  bins_livestock <- reactive({
     filtered_data() %>%
       mutate(count_bin = cut(allowable_count, 
                              breaks = c(0, 500, 1000, 5000, 10000, 50000, 100000, 500000, 5000000), 
@@ -129,31 +91,74 @@ server <- function(input, output, session) {
                                           ">500,000")),
              scaled_size = rescale(as.numeric(cut(allowable_count, 
                                                   breaks = c(0, 500, 1000, 5000, 10000, 50000, 100000, 500000, 5000000))), 
-                                   to = c(1, 10)))
+                                   to = c(4, 10)))
   })
   
-  # Render animal operations map
-  output$livestock_map <- renderLeaflet({
-    pal <- colorFactor(palette = c("blue", "green", "red"), domain = df_livestock$regulated_operation)
-    labels <- sprintf("Allowable count: <strong>%s</strong>", binned_data()$allowable_count) %>%
+  # Trigger map rendering
+  map_data <- eventReactive(input$update_map, {
+    list(org_amr = org_amr(), bins_livestock = bins_livestock())
+  })
+  
+  # Render leaflet map
+  output$pct_amr_map <- renderLeaflet({
+    data <- map_data()
+    org_amr_data <- data$org_amr
+    bins_livestock_data <- data$bins_livestock
+    
+    bins_amr <- c(0, 10, 20, 30, 40, 50, 100)
+    pal_amr <- colorBin(palette = "OrRd", bins = bins_amr, domain = df_isolates$pct)
+    pal_livestock <- colorFactor(palette = c("yellow", "green", "blue"), domain = df_livestock$regulated_operation)
+    labels <- sprintf("<strong>%s</strong><br/>
+                      ><strong>%s</strong><br/>
+                      >%g percent resistant<br/>
+                      >%g total isolates",
+                      org_amr_data$county_prop, org_amr_data$zip_code, org_amr_data$pct, org_amr_data$total) %>%
       lapply(htmltools::HTML)
     
-    leaflet(data = binned_data()) %>%
+    leaflet(data = org_amr_data) %>%
       addProviderTiles(provider = "CartoDB.Positron") %>%
-      setView(lng = -79.7, lat = 35.3, zoom = 7) %>%
-      addCircleMarkers(lat = ~latitude,
+      setView(lng = -79.7, lat = 35.3, zoom = 8) %>%
+      addPolygons(data = org_amr_data,
+                  label = labels,
+                  stroke = FALSE,
+                  smoothFactor = 0.5,
+                  opacity = 1,
+                  fillOpacity = 0.7,
+                  fillColor = ~ pal_amr(pct),
+                  highlightOptions = highlightOptions(weight = 5,
+                                                      fillOpacity = 1,
+                                                      color = "black",
+                                                      opacity = 1,
+                                                      bringToFront = FALSE)) %>%
+      addCircleMarkers(data = bins_livestock_data,
+                       lat = ~latitude,
                        lng = ~longitude,
                        radius = ~scaled_size,
-                       color = ~pal(regulated_operation),
-                       fillOpacity = 0.3,
-                       stroke = FALSE,
-                       label = labels) %>%
-      addCustomLegend()
+                       fillColor = ~pal_livestock(regulated_operation),
+                       weight = 1,
+                       stroke = TRUE) %>%
+      addCustomLegend() %>%
+      
+      addLegend("bottomright",
+                pal = pal_amr,
+                values = ~ pct,
+                title = "Percent of isolates resistant",
+                opacity = 0.7)
+  })
+  
+  # Text for data source
+  observeEvent(input$data_source, {
+    showModal(modalDialog("Data from clinical bacterial cultures sourced from the UNC Health electronic health 
+    record system, years 2014-2023. Percentages represent the number of isolates that were resistant divided 
+    by the total number of isolates, per ZIP code of patient residence. County names represent the primary county a ZIP code 
+    is located in. Data are included for ZIP codes with 10 or more isolates. Data for livestock feeding
+    feeding operations souced from NC Department of Agriculture and Consumer Services 
+    https://www.deq.nc.gov/about/divisions/water-resources/permitting/animal-feeding-operations/animal-facility-map."))
   })
   
   # Custom legend function
   addCustomLegend <- function(map) {
-    binned_data_sorted <- binned_data() %>% 
+    binned_data_sorted <- bins_livestock() %>% 
       arrange(as.numeric(as.factor(count_label))) %>%
       distinct(count_label, scaled_size)
     
@@ -162,7 +167,7 @@ server <- function(input, output, session) {
     
     legend_html <- paste0(
       "<div style='background: white; padding: 10px; border-radius: 8px;'>",
-      "<strong>Allowable count</strong><br>",
+      "<strong>Number of animals</strong><br>",
       paste(
         mapply(function(size, bin) {
           paste0(
@@ -196,9 +201,9 @@ server <- function(input, output, session) {
       geom_histogram(bins = 20) +
       theme_classic() +
       theme(axis.title.x = element_text(size = 16),
-        axis.title.y = element_text(size = 16),
-        axis.text.x = element_text(size = 14),
-        axis.text.y = element_text(size = 14)) +
+            axis.title.y = element_text(size = 16),
+            axis.text.x = element_text(size = 14),
+            axis.text.y = element_text(size = 14)) +
       xlab("Percent resistant") +
       ylab("Number of ZIP codes")
   })
@@ -206,10 +211,18 @@ server <- function(input, output, session) {
   # Render livestock data table
   output$livestock_table <- DT::renderDataTable({
     filtered_data() %>%
-      select(-c(latitude, longitude, allowable_count_binned)) %>%
+      select(-c(latitude, longitude, allowable_count_binned, permit_type)) %>%
       datatable(options = list(pageLength = 5, autoWidth = TRUE))
+  })
+  
+  # Render animal density table
+  output$livestock_density <- DT::renderDataTable({
+    filtered_data() %>%
+      tabyl(allowable_count_binned) %>% 
+      adorn_pct_formatting()
   })
 }
 
 shinyApp(ui = ui, server = server)
 
+    
