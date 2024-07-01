@@ -7,10 +7,13 @@ library(sf)
 library(DT)
 library(fontawesome)
 library(ggplot2)
+library(janitor)
 
+# Datasets
 df_isolates <- readRDS("J:/ID/AMR_map_van_Duin/species maps/interactive_map/shiny_app/amr_zips_shp.rds")
 df_livestock <- readRDS("J:/ID/AMR_map_van_Duin/species maps/interactive_map/shiny_app/livestock.rds")
 
+# Define UI
 ui <- dashboardPage(
   dashboardHeader(title = "Interactive Map of AMR in North Carolina", titleWidth = 400),
   dashboardSidebar(
@@ -18,16 +21,25 @@ ui <- dashboardPage(
       menuItem("Map", tabName = "map"),
       menuItem("Data", tabName = "data")
     ),
-    selectInput("organism", "Select organism", choices = unique(df_isolates$organism)),
+    selectInput("organism", 
+                "Select organism", 
+                choices = unique(df_isolates$organism)),
     
-    checkboxGroupInput("regulated_operation", "Choose operation type:", 
-                       choices = c("Swine", "Cattle", "Poultry"),
+    checkboxGroupInput("regulated_operation", 
+                       "Choose operation type:", 
+                       choiceNames = list(
+                         tags$span("Swine", style = "color: lightblue; font-weight: bold; font-size: 18"),
+                         tags$span("Cattle", style = "color: green; font-weight: bold; font-size: 18"), 
+                         tags$span("Poultry", style = "color: yellow; font-weight: bold; font-size: 18")
+                       ),
+                       choiceValues = c("Swine", "Cattle", "Poultry"),
                        selected = c("Swine", "Cattle", "Poultry")),
     actionButton("update_map", "Update"),
     actionButton("data_source", "About the data")
   ),
   
   dashboardBody(
+    tags$head(tags$style(HTML(".main-sidebar { font-size: 18px; }"))),
     tabItems(
       tabItem(tabName = "map",
               fluidRow(
@@ -57,7 +69,7 @@ ui <- dashboardPage(
                   collapsible = TRUE, DT::dataTableOutput("livestock_table")
                 ),
                 box(
-                  title = "Livestock density", status = "primary", solidHeader = TRUE, width = 5, height = 500,
+                  title = "Livestock density table", status = "primary", solidHeader = TRUE, width = 5, height = 500,
                   collapsible = TRUE, DT::dataTableOutput("livestock_density")
                 )
               )
@@ -66,18 +78,19 @@ ui <- dashboardPage(
   )
 )
 
+# Define server
 server <- function(input, output, session) {
-  # Filter data by selected organism
+  # Filter AMR data by user-selected organism
   org_amr <- reactive({
     df_isolates %>% filter(organism == input$organism)
   })
   
-  # Filter data by selected regulated_operation
+  # Filter livestock data by user-selected operation type
   filtered_data <- reactive({
     df_livestock %>% filter(regulated_operation %in% input$regulated_operation)
   })
   
-  # Bin counts and create scaled size
+  # Bin operation head counts and create scaled size for markers
   bins_livestock <- reactive({
     filtered_data() %>%
       mutate(count_bin = cut(allowable_count, 
@@ -94,7 +107,7 @@ server <- function(input, output, session) {
                                    to = c(4, 10)))
   })
   
-  # Trigger map rendering
+  # Trigger map rendering when user clicks update button
   map_data <- eventReactive(input$update_map, {
     list(org_amr = org_amr(), bins_livestock = bins_livestock())
   })
@@ -104,22 +117,23 @@ server <- function(input, output, session) {
     data <- map_data()
     org_amr_data <- data$org_amr
     bins_livestock_data <- data$bins_livestock
-    
+    # Define categories for AMR percentages
     bins_amr <- c(0, 10, 20, 30, 40, 50, 100)
     pal_amr <- colorBin(palette = "OrRd", bins = bins_amr, domain = df_isolates$pct)
-    pal_livestock <- colorFactor(palette = c("yellow", "green", "blue"), domain = df_livestock$regulated_operation)
-    labels <- sprintf("<strong>%s</strong><br/>
-                      ><strong>%s</strong><br/>
-                      >%g percent resistant<br/>
-                      >%g total isolates",
-                      org_amr_data$county_prop, org_amr_data$zip_code, org_amr_data$pct, org_amr_data$total) %>%
+    pal_livestock <- colorFactor(palette = c("green", "yellow", "lightblue"), domain = df_livestock$regulated_operation)
+    # popup labels for AMR map
+    labels_amr <- sprintf("<strong> ZIP code %s</strong><br/>
+                      <strong>%s County</strong><br/>
+                      %g percent resistant<br/>
+                      %g total isolates",
+                          org_amr_data$zip_code, org_amr_data$county_prop, org_amr_data$pct, org_amr_data$total) %>%
       lapply(htmltools::HTML)
     
     leaflet(data = org_amr_data) %>%
       addProviderTiles(provider = "CartoDB.Positron") %>%
       setView(lng = -79.7, lat = 35.3, zoom = 8) %>%
       addPolygons(data = org_amr_data,
-                  label = labels,
+                  label = labels_amr,
                   stroke = FALSE,
                   smoothFactor = 0.5,
                   opacity = 1,
@@ -135,8 +149,12 @@ server <- function(input, output, session) {
                        lng = ~longitude,
                        radius = ~scaled_size,
                        fillColor = ~pal_livestock(regulated_operation),
-                       weight = 1,
-                       stroke = TRUE) %>%
+                       weight = .5,
+                       stroke = TRUE,
+                       popup = ~paste("Operation type:", regulated_activity, 
+                                      "<br/>Allowed number of animals:", allowable_count, 
+                                      "<br/>ZIP code:", zip)) %>%
+      
       addCustomLegend() %>%
       
       addLegend("bottomright",
@@ -189,9 +207,9 @@ server <- function(input, output, session) {
   # Render AMR data table
   output$amr_table <- DT::renderDataTable({
     org_amr() %>%
-      select(zip_code, total, pct) %>%
+      select(zip_code, county_prop, total, pct) %>%
       st_set_geometry(NULL) %>%
-      datatable(options = list(pageLength = 5, autoWidth = TRUE))
+      datatable(colnames = c("ZIP code", "Primary county", "Total number of isolates for ZIP code", "Percent resistant"))
   })
   
   # Render AMR histogram
@@ -211,18 +229,25 @@ server <- function(input, output, session) {
   # Render livestock data table
   output$livestock_table <- DT::renderDataTable({
     filtered_data() %>%
-      select(-c(latitude, longitude, allowable_count_binned, permit_type)) %>%
-      datatable(options = list(pageLength = 5, autoWidth = TRUE))
+      select(regulated_activity, allowable_count, zip) %>%
+      datatable(options = list(pageLength = 5), colnames = c("Operation type", "Allowed number of animals", "ZIP code"))
   })
   
   # Render animal density table
   output$livestock_density <- DT::renderDataTable({
     filtered_data() %>%
       tabyl(allowable_count_binned) %>% 
-      adorn_pct_formatting()
+      adorn_pct_formatting() %>%
+      datatable(colnames = c("Allowed number of animals", "Number of operations", "Percent of total"))
   })
 }
 
 shinyApp(ui = ui, server = server)
+
+
+# df_isolates %>%
+#   select(zip_code, county_prop, total, pct) %>%
+#   datatable(colnames = c("ZIP code", "Primary county", "Total number of isolates for ZIP code", "Percent resistant"))
+
 
     
