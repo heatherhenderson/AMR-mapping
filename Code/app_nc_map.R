@@ -245,9 +245,5 @@ server <- function(input, output, session) {
 shinyApp(ui = ui, server = server)
 
 
-# df_isolates %>%
-#   select(zip_code, county_prop, total, pct) %>%
-#   datatable(colnames = c("ZIP code", "Primary county", "Total number of isolates for ZIP code", "Percent resistant"))
-
 
     
