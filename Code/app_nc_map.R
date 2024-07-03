@@ -1,6 +1,6 @@
 library(shiny)
 library(leaflet)
-library(dplyr)
+library(tidyverse)
 library(scales)
 library(shinydashboard)
 library(sf)
@@ -21,74 +21,83 @@ ui <- dashboardPage(
       menuItem("Map", tabName = "map"),
       menuItem("Data", tabName = "data")
     ),
-    # Data layer selection
     checkboxGroupInput("layers", "Choose data layers to display:",
                        choices = list("AMR Isolates" = "isolates", "Livestock Operations" = "livestock")),
-    # Bacterial isolate selection
     selectInput(inputId = "organism", 
                 label = "Select resistant species", 
                 choices = unique(df_isolates$organism)),
-    # Livestock operation type selection
     checkboxGroupInput(inputId = "regulated_operation", 
                        label = "Choose livestock operation type:", 
                        choiceNames = c("Swine", "Cattle", "Poultry"),
-                       choiceValues = c("Swine", "Cattle", "Poultry")),
+                       choiceValues = c("Swine", "Cattle", "Poultry"),
+                       selected = c("Swine", "Cattle", "Poultry")),
     actionButton("data_source", "About the data")
   ),
-  
   dashboardBody(
-    tags$head(tags$style(HTML(".main-sidebar { font-size: 18px; }"))),
+    tags$head(
+      tags$style(HTML("
+        .main-sidebar { font-size: 18px; }
+        .resizable-box {
+          position: relative;
+          width: 100%;
+          height: calc(100vh - 200px);
+          margin-top: 20px;
+        }
+        .resizable-table {
+          width: 100%;
+          height: calc(100vh - 400px);
+        }
+      "))
+    ),
     tabItems(
       tabItem(tabName = "map",
               fluidRow(
                 box(
-                  title = "NC Map", status = "primary", solidHeader = TRUE, width = 12,
-                  collapsible = TRUE, leafletOutput("nc_map", height = 800)
+                  title = "NC Map", status = "primary", solidHeader = TRUE, width = 10,
+                  collapsible = TRUE, div(class = "resizable-box", leafletOutput("nc_map"))
                 ),
                 box(
                   textOutput("data_source_text")
                 )
               )
       ),
-      
       tabItem(tabName = "data",
               fluidRow(
                 box(
-                  title = "AMR data table", status = "primary", solidHeader = TRUE, width = 5, height = 600,
-                  collapsible = TRUE, DT::dataTableOutput("amr_table")
+                  title = "AMR data table", status = "primary", solidHeader = TRUE, width = 6,
+                  collapsible = TRUE, div(class = "resizable-table", DT::dataTableOutput("amr_table"))
                 ),
                 box(
-                  title = "AMR histogram", status = "primary", solidHeader = TRUE, width = 5, height = 600,
-                  collapsible = TRUE, plotOutput("amr_histogram")
-                )),
+                  title = "AMR histogram", status = "primary", solidHeader = TRUE, width = 6,
+                  collapsible = TRUE, plotOutput("amr_histogram", height = "auto")
+                )
+              ),
               fluidRow(
                 box(
-                  title = "Livestock data table", status = "primary", solidHeader = TRUE, width = 5, height = 600,
-                  collapsible = TRUE, DT::dataTableOutput("livestock_table")
+                  title = "Livestock data table", status = "primary", solidHeader = TRUE, width = 6,
+                  collapsible = TRUE, div(class = "resizable-table", DT::dataTableOutput("livestock_table"))
                 ),
                 box(
-                  title = "Livestock density table", status = "primary", solidHeader = TRUE, width = 5, height = 600,
-                  collapsible = TRUE, DT::dataTableOutput("livestock_density")
+                  title = "Livestock density table", status = "primary", solidHeader = TRUE, width = 6,
+                  collapsible = TRUE, div(class = "resizable-table", DT::dataTableOutput("livestock_density"))
                 )
               )
-            )
+      )
     )
   )
 )
 
-# Define server
 server <- function(input, output, session) {
-  # Filter AMR data by user-selected organism
   org_amr <- reactive({
     df_isolates %>% filter(organism == input$organism)
   })
-  # Filter livestock data by user-selected operation type
+  
   operation_type <- reactive({
     df_livestock %>% filter(regulated_operation %in% input$regulated_operation)
   })
-  # Bins for resistance percentages
+  
   bins_amr <- c(0, 10, 20, 30, 40, 50, 100)
-  # Bins for operation head counts and scaled size for markers
+  
   bins_livestock <- reactive({
     operation_type() %>%
       mutate(count_bin = cut(allowable_count, 
@@ -100,19 +109,18 @@ server <- function(input, output, session) {
                                labels = c("<500", "500-1,000", "1,001-5,000", "5,001-10,000", 
                                           "10,001-50,000", "50,001-100,000", "100,001-500,000",
                                           ">500,000")),
-             scaled_size = rescale(as.numeric(cut(allowable_count, 
-                                                  breaks = c(0, 500, 1000, 5000, 10000, 50000, 100000, 500000, 5000000))), 
-                                   to = c(4, 10)))
+             scaled_size = scales::rescale(as.numeric(cut(allowable_count, 
+                                                          breaks = c(0, 500, 1000, 5000, 10000, 50000, 100000, 500000, 5000000))), 
+                                           to = c(4, 10)))
   })
-  # Color palettes for layers
+  
   pal_amr <- colorBin(palette = "OrRd", bins = bins_amr, domain = df_isolates$pct)
   pal_livestock <- colorFactor(palette = c("green", "yellow", "lightblue"), domain = df_livestock$regulated_operation)
-
-  # Render leaflet map
+  
   output$nc_map <- renderLeaflet({
-    leaflet() %>%
+    leaflet(options = leafletOptions(zoomSnap = 0.25, zoomDelta=0.25)) %>%
       addTiles() %>%
-      setView(lng = -79.7, lat = 35.3, zoom = 7)
+      setView(lng = -79.7, lat = 35.3, zoom = 7.5)
   })
   
   observe({
@@ -193,21 +201,17 @@ server <- function(input, output, session) {
     map %>%
       addControl(html = legend_html, position = "bottomright")
   }
-
-
   
-  # Render AMR data table
   output$amr_table <- DT::renderDataTable({
     org_amr() %>%
+      st_drop_geometry() %>%
       select(zip_code, county_prop, total, pct) %>%
-      st_set_geometry(NULL) %>%
       datatable(colnames = c("ZIP code", "Primary county", "Total number of isolates for ZIP code", "Percent resistant"))
   })
   
-  # Render AMR histogram
   output$amr_histogram <- renderPlot({
     org_amr() %>%
-      ggplot2::ggplot(aes(x = pct)) +
+      ggplot(aes(x = pct)) +
       geom_histogram(bins = 20) +
       theme_classic() +
       theme(axis.title.x = element_text(size = 16),
@@ -216,26 +220,22 @@ server <- function(input, output, session) {
             axis.text.y = element_text(size = 14)) +
       xlab("Percent resistant") +
       ylab("Number of ZIP codes")
-  })
+  }, height = function() { session$clientData$output_amr_histogram_width })
   
-  # Render livestock data table
   output$livestock_table <- DT::renderDataTable({
     operation_type() %>%
       select(regulated_activity, allowable_count, zip) %>%
       datatable(colnames = c("Operation type", "Allowed number of animals", "ZIP code"))
   })
   
-  # Render animal density table
   output$livestock_density <- DT::renderDataTable({
     operation_type() %>%
-      tabyl(allowable_count_binned) %>% 
-      adorn_pct_formatting() %>%
+      janitor::tabyl(allowable_count_binned) %>% 
+      janitor::adorn_pct_formatting() %>%
       datatable(colnames = c("Allowed number of animals", "Number of operations", "Percent of total"))
   })
 }
-
 shinyApp(ui = ui, server = server)
-
 
 
     
