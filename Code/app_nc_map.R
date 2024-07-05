@@ -1,13 +1,13 @@
 library(shiny)
-library(leaflet)
-library(tidyverse)
-library(scales)
 library(shinydashboard)
-library(sf)
+library(leaflet)
 library(DT)
-library(fontawesome)
+library(dplyr)
 library(ggplot2)
+library(scales)
+library(htmltools)
 library(janitor)
+library(sf)
 
 # Datasets
 df_isolates <- readRDS("J:/ID/AMR_map_van_Duin/species maps/interactive_map/shiny_app/amr_zips_shp.rds")
@@ -15,24 +15,35 @@ df_livestock <- readRDS("J:/ID/AMR_map_van_Duin/species maps/interactive_map/shi
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Interactive Map of AMR isolates and risk factors in North Carolina", titleWidth = 400),
-  dashboardSidebar(
-    sidebarMenu(
-      menuItem("Map", tabName = "map"),
-      menuItem("Data", tabName = "data")
-    ),
-    checkboxGroupInput("layers", "Choose data layers to display:",
-                       choices = list("AMR Isolates" = "isolates", "Livestock Operations" = "livestock")),
-    selectInput(inputId = "organism", 
-                label = "Select resistant species", 
-                choices = unique(df_isolates$organism)),
-    checkboxGroupInput(inputId = "regulated_operation", 
-                       label = "Choose livestock operation type:", 
-                       choiceNames = c("Swine", "Cattle", "Poultry"),
-                       choiceValues = c("Swine", "Cattle", "Poultry"),
-                       selected = c("Swine", "Cattle", "Poultry")),
-    actionButton("data_source", "About the data")
+  dashboardHeader(title = "Interactive Map of AMR isolates and risk factors in North Carolina", titleWidth = 700),
+  dashboardSidebar(width = 275,
+                   sidebarMenu(
+                     menuItem("Map", tabName = "map"),
+                     menuItem("Data", tabName = "data")
+                   ),
+                   # Data layer selection
+                   checkboxGroupInput("layers", "Choose data layers to display on map:",
+                                      choices = list("AMR isolates" = "isolates", "Livestock operations" = "livestock")),
+                   # Conditional UI for organism selection
+                   conditionalPanel(
+                     condition = "input.layers.includes('isolates')",
+                     selectInput(inputId = "organism", 
+                                 label = "Select resistant species", 
+                                 choices = unique(df_isolates$organism),
+                                 selected = NULL)
+                   ),
+                   # Conditional UI for livestock operation type selection
+                   conditionalPanel(
+                     condition = "input.layers.includes('livestock')",
+                     checkboxGroupInput(inputId = "regulated_operation", 
+                                        label = "Choose livestock operation type:", 
+                                        choiceNames = c("Swine", "Cattle", "Poultry"),
+                                        choiceValues = c("Swine", "Cattle", "Poultry"),
+                                        selected = NULL)
+                   ),
+                   actionButton("data_source", "About the data")
   ),
+  
   dashboardBody(
     tags$head(
       tags$style(HTML("
@@ -87,17 +98,21 @@ ui <- dashboardPage(
   )
 )
 
+# Define server
 server <- function(input, output, session) {
+  # Filter AMR data by user-selected organism
   org_amr <- reactive({
+    req(input$organism)  # Ensure input$organism is available
     df_isolates %>% filter(organism == input$organism)
   })
-  
+  # Filter livestock data by user-selected operation type
   operation_type <- reactive({
+    req(input$regulated_operation)  # Ensure input$regulated_operation is available
     df_livestock %>% filter(regulated_operation %in% input$regulated_operation)
   })
-  
+  # Bins for resistance percentages
   bins_amr <- c(0, 10, 20, 30, 40, 50, 100)
-  
+  # Bins for operation head counts and scaled size for markers
   bins_livestock <- reactive({
     operation_type() %>%
       mutate(count_bin = cut(allowable_count, 
@@ -113,10 +128,11 @@ server <- function(input, output, session) {
                                                           breaks = c(0, 500, 1000, 5000, 10000, 50000, 100000, 500000, 5000000))), 
                                            to = c(4, 10)))
   })
-  
+  # Color palettes for layers
   pal_amr <- colorBin(palette = "OrRd", bins = bins_amr, domain = df_isolates$pct)
   pal_livestock <- colorFactor(palette = c("green", "yellow", "lightblue"), domain = df_livestock$regulated_operation)
   
+  # Render leaflet map
   output$nc_map <- renderLeaflet({
     leaflet(options = leafletOptions(zoomSnap = 0.25, zoomDelta=0.25)) %>%
       addTiles() %>%
@@ -125,8 +141,8 @@ server <- function(input, output, session) {
   
   observe({
     leafletProxy("nc_map") %>% clearShapes() %>% clearMarkers() %>% clearControls()
-    
-    if ("isolates" %in% input$layers) {
+    # Add AMR layer if selected and organism is chosen
+    if ("isolates" %in% input$layers && !is.null(input$organism)) {
       leafletProxy("nc_map") %>%
         addPolygons(data = org_amr(),
                     label = sprintf("<strong> ZIP code %s</strong><br/>
@@ -140,15 +156,15 @@ server <- function(input, output, session) {
                     opacity = 1,
                     fillOpacity = 0.7,
                     fillColor = ~ pal_amr(pct)) %>%
-        
+        # Legend for AMR percentages
         addLegend("bottomright",
                   pal = pal_amr,
                   values = df_isolates$pct,
                   title = "Percent of isolates resistant",
                   opacity = 0.7)
     }
-    
-    if ("livestock" %in% input$layers) {
+    # Add livestock layer if selected and operation type is chosen
+    if ("livestock" %in% input$layers && !is.null(input$regulated_operation)) {
       livestock_data <- bins_livestock()
       
       leafletProxy("nc_map") %>%
@@ -159,18 +175,30 @@ server <- function(input, output, session) {
                          fillColor = ~pal_livestock(regulated_operation),
                          weight = .5,
                          stroke = TRUE,
-                         popup = ~paste("Operation type:", regulated_activity, 
+                         popup = ~paste("Operation type:", regulated_operation, 
                                         "<br/>Allowed number of animals:", allowable_count, 
                                         "<br/>ZIP code:", zip)) %>%
-        
+        # Legend for livestock palette
         addLegend("bottomright",
                   pal = pal_livestock,
                   values = df_livestock$regulated_operation,
                   title = "Livestock Operation Type",
                   opacity = 0.7) %>%
-        
+        # Legend for livestock bin sizes
         addCustomLegend(livestock_data)
     }
+  })
+  
+  observeEvent(input$data_source, {
+    showModal(modalDialog(
+      title = "About the data",
+      "Data from clinical bacterial cultures sourced from the UNC Health electronic health 
+      record system, years 2014-2023. Percentages represent the number of isolates that were resistant divided 
+      by the total number of isolates, per ZIP code of patient residence. County names represent the primary county a ZIP code 
+      is located in. Data are included for ZIP codes with 10 or more isolates. Data for livestock feeding
+      operations sourced from NC Department of Agriculture and Consumer Services 
+      https://www.deq.nc.gov/about/divisions/water-resources/permitting/animal-feeding-operations/animal-facility-map."
+    ))
   })
   
   addCustomLegend <- function(map, livestock_data) {
@@ -202,13 +230,14 @@ server <- function(input, output, session) {
       addControl(html = legend_html, position = "bottomright")
   }
   
+  # Render AMR data table
   output$amr_table <- DT::renderDataTable({
     org_amr() %>%
-      st_drop_geometry() %>%
+      sf::st_drop_geometry() %>%
       select(zip_code, county_prop, total, pct) %>%
       datatable(colnames = c("ZIP code", "Primary county", "Total number of isolates for ZIP code", "Percent resistant"))
   })
-  
+  # Render AMR histogram
   output$amr_histogram <- renderPlot({
     org_amr() %>%
       ggplot(aes(x = pct)) +
@@ -221,13 +250,13 @@ server <- function(input, output, session) {
       xlab("Percent resistant") +
       ylab("Number of ZIP codes")
   }, height = function() { session$clientData$output_amr_histogram_width })
-  
+  # Render livestock data table
   output$livestock_table <- DT::renderDataTable({
     operation_type() %>%
-      select(regulated_activity, allowable_count, zip) %>%
+      select(regulated_operation, allowable_count, zip) %>%
       datatable(colnames = c("Operation type", "Allowed number of animals", "ZIP code"))
   })
-  
+  # Render animal density table
   output$livestock_density <- DT::renderDataTable({
     operation_type() %>%
       janitor::tabyl(allowable_count_binned) %>% 
@@ -235,7 +264,5 @@ server <- function(input, output, session) {
       datatable(colnames = c("Allowed number of animals", "Number of operations", "Percent of total"))
   })
 }
+
 shinyApp(ui = ui, server = server)
-
-
-    
