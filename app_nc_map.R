@@ -9,6 +9,7 @@ library(htmltools)
 library(janitor)
 library(sf)
 library(readxl)
+library(plotly)
 
 # Datasets
 df_isolates <- readRDS("J:/ID/AMR_map_van_Duin/species maps/interactive_map/shiny_app/amr_zips_shp.rds")
@@ -47,7 +48,7 @@ ui <- dashboardPage(
                    # Slider for pctile variable
                    sliderInput(inputId = "pctile_range", 
                                label = tags$span(style = "font-weight: normal;", 
-                                                 "Select range of Social Vulnerability Index percentile to display",
+                                                 "Select SES percentile range to display",
                                                  tags$br(), "(higher = greater vulnerability):"),
                                min = min(df_isolates$pctile, na.rm = TRUE), 
                                max = max(df_isolates$pctile, na.rm = TRUE),
@@ -84,7 +85,7 @@ ui <- dashboardPage(
                 ),
                 box(
                   title = "AMR histogram", status = "primary", solidHeader = TRUE, width = 6,
-                  collapsible = TRUE, plotOutput("amr_histogram", height = "auto")
+                  collapsible = TRUE, plotlyOutput("amr_histogram", height = "auto")
                 )
               ),
               fluidRow(
@@ -203,7 +204,7 @@ server <- function(input, output, session) {
       is located in. Data are included for ZIP codes with 10 or more isolates.<br>
       <br>Data for livestock feeding operations sourced from NC Department of Agriculture and Consumer Services 
       https://www.deq.nc.gov/about/divisions/water-resources/permitting/animal-feeding-operations/animal-facility-map.<br>
-      <br>Social Vulnerability Index percentile adapted for ZIP codes using CDC/ATSDR SVI Methodology:
+      <br>SES subscore of the Social Vulnerability Index adapted for ZIP codes using CDC/ATSDR SVI Methodology:
       https://www.atsdr.cdc.gov/placeandhealth/svi/index.html#anchor_1714425989435.")
     ))
   })
@@ -245,18 +246,19 @@ server <- function(input, output, session) {
       datatable(colnames = c("ZIP code", "Primary county", "Total number of isolates for ZIP code", "Percent resistant"))
   })
   # Render AMR histogram
-  output$amr_histogram <- renderPlot({
-    org_amr() %>%
-      ggplot(aes(x = pct)) +
-      geom_histogram(bins = 20) +
-      theme_classic() +
-      theme(axis.title.x = element_text(size = 16),
-            axis.title.y = element_text(size = 16),
-            axis.text.x = element_text(size = 14),
-            axis.text.y = element_text(size = 14)) +
-      xlab("Percent resistant") +
-      ylab("Number of ZIP codes")
-  }, height = function() { session$clientData$output_amr_histogram_width })
+  output$amr_histogram <- renderPlotly({
+    amr_data <- org_amr()
+    
+    p <- ggplot(amr_data, aes(x = pct)) +
+      geom_histogram(binwidth = 5, fill = "steelblue", color = "white") +
+      labs(title = "Distribution of Resistant Isolates",
+           x = "Percent of isolates resistant",
+           y = "Count") +
+      theme_minimal()
+    
+    ggplotly(p) %>%
+      layout(autosize = TRUE)
+  })
   # Render livestock data table
   output$livestock_table <- DT::renderDataTable({
     operation_type() %>%
