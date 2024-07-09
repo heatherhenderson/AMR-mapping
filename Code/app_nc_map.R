@@ -12,10 +12,11 @@ library(readxl)
 library(plotly)
 
 # Datasets
-df_isolates <- readRDS("J:/ID/AMR_map_van_Duin/species maps/interactive_map/shiny_app/amr_zips_shp.rds")
+isolates <- readRDS("J:/ID/AMR_map_van_Duin/species maps/interactive_map/shiny_app/amr_zips_shp.rds")
 df_livestock <- readRDS("J:/ID/AMR_map_van_Duin/species maps/interactive_map/shiny_app/livestock.rds")
 zip_ses <- read_excel("J:/ID/AMR_map_van_Duin/zip_ses.xlsx", col_types = c("text", "numeric", "numeric"))
-df_isolates <- df_isolates %>% left_join(zip_ses)
+
+df_isolates <- isolates %>% left_join(zip_ses %>% mutate(pctile_ses = 1 - pctile) %>% select(zip_code, pctile_ses))
 
 # Define UI
 ui <- dashboardPage(
@@ -45,14 +46,13 @@ ui <- dashboardPage(
                                         choiceValues = c("Swine", "Cattle", "Poultry"),
                                         selected = c("Swine", "Cattle", "Poultry"))
                    ),
-                   # Slider for pctile variable
-                   sliderInput(inputId = "pctile_range", 
+                   # Slider for pctile_ses variable
+                   sliderInput(inputId = "pctile_ses_range", 
                                label = tags$span(style = "font-weight: normal;", 
-                                                 "Select SES percentile range to display",
-                                                 tags$br(), "(higher = greater vulnerability):"),
-                               min = min(df_isolates$pctile, na.rm = TRUE), 
-                               max = max(df_isolates$pctile, na.rm = TRUE),
-                               value = c(min(df_isolates$pctile, na.rm = TRUE), max(df_isolates$pctile, na.rm = TRUE))),
+                                                 "Select SES percentile range to display"),
+                               min = min(df_isolates$pctile_ses, na.rm = TRUE), 
+                               max = max(df_isolates$pctile_ses, na.rm = TRUE),
+                               value = c(min(df_isolates$pctile_ses, na.rm = TRUE), max(df_isolates$pctile_ses, na.rm = TRUE))),
                    actionButton("data_source", "About the data")
   ),
   
@@ -109,7 +109,7 @@ server <- function(input, output, session) {
   org_amr <- reactive({
     req(input$organism)  # Ensure input$organism is available
     df_isolates %>% filter(organism == input$organism,
-                           pctile >= input$pctile_range[1] & pctile <= input$pctile_range[2])
+                           pctile_ses >= input$pctile_ses_range[1] & pctile_ses <= input$pctile_ses_range[2])
   })
   # Filter livestock data by user-selected operation type
   operation_type <- reactive({
