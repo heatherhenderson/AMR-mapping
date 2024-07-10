@@ -249,14 +249,15 @@ server <- function(input, output, session) {
   output$amr_histogram <- renderPlotly({
     amr_data <- org_amr()
     
-    p <- ggplot(amr_data, aes(x = pct)) +
-      geom_histogram(binwidth = 5, fill = "steelblue", color = "white") +
+    p <- ggplot(amr_data, aes(x = pct, text = paste("Count:", ..count.., "<br>Percent:", ..x..))) +
+      geom_histogram(binwidth = 2, fill = "steelblue", color = "white") +
       labs(title = "Distribution of Resistant Isolates",
            x = "Percent of isolates resistant",
-           y = "Count") +
-      theme_minimal()
+           y = "Number of ZIP codes") +
+      theme_minimal() +
+      scale_x_continuous(breaks = seq(0, 100, by = 10))
     
-    ggplotly(p) %>%
+    ggplotly(p, tooltip = "text") %>%
       layout(autosize = TRUE)
   })
   # Render livestock data table
