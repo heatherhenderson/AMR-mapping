@@ -1,13 +1,19 @@
 ---
-title: "AMR Enterobacterales"
+title: "AMR Mortality and SES analysis"
 author: "Henderson, Heather"
 date: "`r format(Sys.time(), '%B %d, %Y')`"
 format: html
 self-contained: true
 toc: true
-toc-depth: 2
+toc-depth: 4
+code-fold: true
 editor: visual
 ---
+
+```{r}
+#| include: false
+knitr::opts_chunk$set(warning = FALSE)
+```
 
 ```{r}
 #| label: load-packages
@@ -21,393 +27,997 @@ packages <- function(x) {
     }
   }
 }
-packages(c("haven", "readxl", "readr", "tidyverse" , "data.table" , "naniar", "rockchalk", "lubridate", "kableExtra", "DT", "formatR", "zoo", "binom", "plotly", "janitor", "sjlabelled", "Hmisc", "rms", "aod", "sandwich", "lmtest", "tableone", "broom", "pooling", "glmnet", "caret", "class", "investr", "creditmodel", "furniture", "arsenal", "RColorBrewer", "survminer", "survival", "cmprsk", "condSURV", "tidycmprsk", "gtsummary", "ggsurvfit"))
+packages(c("haven", "readxl", "readr", "tidyverse" , "data.table" , "naniar", "rockchalk", "lubridate", "kableExtra", "DT", "formatR", "zoo", "janitor", "tableone", "broom", "furniture", "arsenal", "RColorBrewer", "survminer", "survival", "condSURV", "gtsummary", "ggsurvfit", "ggstance", "Hmisc", "rms", "sandwich", "lmtest", "ipw"))
 ```
+
+# Data
 
 ```{r}
 #| echo: false
-setwd("Y:/amr_mapping_rproj")
-culture_data_enterobact_2014_2023 <- read_rds("data files/entero_isolates_2014_2023_april2023.rds")
+setwd("C:/Users/henderh/OneDrive - University of North Carolina at Chapel Hill/Projects/AMR/AMR_mapping_project/AMR mortality analysis/mortality_rproj/")
+
+data_all <- readRDS("Z:/Van Duin_David_IRB23-2326/amr_mapping_rproj/data files/all_species_full_data.rds")
+distance <- read_rds("distance_1218.rds")
+unc_locations <- read_excel("unc_locations.xlsx")
+other_locations <- read_excel("other_locations.xlsx")
+
+locations <- unc_locations |>
+  bind_rows(other_locations) |>
+  select(-address)
 ```
 
-```{r}
-classes <- c("aminoglycoside", "carbapenem", "cephalosporin_2nd_gen", "cephalosporin_3rd_gen", "penicillins", "penicillins_bli", "quinolone", "sulfonamide")
+**Add follow-up time and status for death within 30 days of isolate**
 
-isolates1 <- culture_data_enterobact_2014_2023 |>
-  mutate(age = floor(as.numeric((order_date - birth_date) / 365.25)),
-         ethnicity_recode = ifelse((is.na(ethnicity_recode)|ethnicity_recode == "unknown"), "other/unknown", ethnicity_recode),
-         race_eth = ifelse(ethnicity_recode == "hispanic", "hispanic", race_recode),
-         isolate_source_factor = factor(isolate_source, levels = c("urine", "blood", "resp", "other"))) |>
-  select(-c(race_recode, isolate_source)) |>
-  filter(culture_year %in% c(2014:2018))
+```{r}
+df <- data_all |>
+  filter(dataset == "enterobacterales") |>
+  # Set start of follow-up
+  dplyr::rename(t0 = result_date) |> 
+  mutate(t = as.numeric(death_date - t0),
+         status = ifelse(!is.na(death_date) & t <= 30, 1, 0),
+         statusf = factor(status, 
+                          labels = c("Survived", "Died")),
+         # Set end of follow-up censoring date
+         tf = pmin(death_date, t0 + 30, as.Date("2023-10-31"), na.rm = TRUE),
+         ftime = as.numeric(tf - t0),
+         ftime = ifelse(ftime < 0, 0, ftime),
+         ftime = ifelse(ftime > 30, 30, ftime),
+         racef = factor(race_recode, 
+                        levels = c("white", "black", "other/unknown")),
+         ethnicityf = factor(ethnicity_recode, 
+                             levels = c("nonhispanic", "hispanic", "unknown")),
+         isolate_sourcef = factor(isolate_source, 
+                                  levels = c("urine", "blood", "resp", "other")),
+         ses = ntile(ses_pctile, 3),
+         ses = as.character(ses),
+         ses = factor(as.character(ses), 
+                      levels = c("1", "2", "3"), 
+                      labels = c("High", "Middle", "Low"))) |>
+  select(pat_deid, isolate_id, age, gender, racef, ethnicityf, zip_code, ses, parent_hospital, department_name, isolate_sourcef, organism_name, antibiotic_class, resistant_to_class, mdr, status, statusf, t0, tf, ftime, culture_year) |> 
+  distinct()
 ```
 
-```{r}
-# Select first isolate per patient, add status at 1 year
-isolates2 <- isolates1 |>
-  slice_min(order_date, by = pat_deid) |>
-  slice_min(isolate_id, by = pat_deid) |>
-  mutate(t = as.numeric(death_date - order_date),
-         status = ifelse(!is.na(death_date) & t <= 365, 2, 1),
-         status_f = factor(status, labels = c("Survived", "Died")))
+**Numbers of patients and isolates, full dataset**
 
-isolates3 <- isolates2 |>
+```{r}
+n_distinct(df$pat_deid)
+n_distinct(df$isolate_id)
+```
+
+**Restrict to blood and respiratory isolates, antibiotic classes of interest, NC zip codes**
+
+```{r}
+df1 <- df |>
+  filter(antibiotic_class %in% c("aminoglycoside", "carbapenem", "cephalosporin_3rd_gen", "cephalosporin_4th_gen", "penicillins_bli", "quinolone"),
+         gender %in% c("male", "female"),
+         isolate_sourcef %in% c("blood", "resp"))  |>
+  mutate(isolate_sourcef = factor(isolate_sourcef, levels = c("blood", "resp")))|>
+  mutate(antibiotic_class = ifelse(str_detect(antibiotic_class, "3|4"), "cephalosporin", antibiotic_class)) |>
+  filter(as.numeric(zip_code) %in% 27006:28909)
+# For calculating distances
+# dept_zip <- df1 |>
+#   select(zip_code, parent_hospital, department_name) |>
+#   distinct()
+# write_rds(dept_zip, "dept_zip.rds")
+```
+
+**Add location type and distance, isolate counter**
+
+```{r}
+df2 <- df1 |> 
+  left_join(locations) |>
+  left_join(distance |> select(zip_code, department_name, distance_km), relationship = "many-to-many") |>
+  filter(location_type %in% c("emergency", "icu", "inpatient", "outpatient"))
+
+isolate_counter <- df2 |>
+  select(pat_deid, isolate_id, organism_name, statusf, t0, tf) |>
+  distinct() |>
   group_by(pat_deid) |>
-  mutate(n = sum(nonsusceptible),
-         any_resistance = ifelse(n == 0, FALSE, TRUE)) |> # Indicator for any resistance
-  ungroup() |>
-  select(pat_deid, age, gender, isolate_source_factor, mdr, any_resistance, status_f) |>
-  distinct()
-```
+  mutate(isolate_number = row_number()) |>
+  ungroup()
 
-```{r}
-isolates4 <- isolates2 |>
-  dplyr::rename(t0 = order_date) |> # Set start of follow-up
-  mutate(tf = as.Date(ifelse(status == 2, death_date, as.Date("2020-12-31"))), # Set end of follow-up
-         time = as.numeric(tf - t0),
-         time = ifelse(time < 0, 0, time)) |>
-  select(pat_deid, age, gender, race_eth, isolate_source_factor, antibiotic_class, nonsusceptible, mdr, status, status_f, t0, tf, time) |> 
-  distinct()
-
-isolates5 <- isolates4 |>
-  filter(str_detect(antibiotic_class, pattern = c("3rd|quin|amino"))) |> # Classes of interest
-  add_count(pat_deid, antibiotic_class) |>
-  filter(n == 1 | n > 1 & nonsusceptible) |> # Remove duplicates if both susceptible and resistant to drugs in a class - select resistant
-  pivot_wider(values_from = nonsusceptible, names_from = antibiotic_class, values_fill = FALSE) |> # Column for each class
-  mutate(res_3gceph_quin = ifelse(cephalosporin_3rd_gen & quinolone, TRUE, FALSE), # Indicators for combinations of resistance
-         res_3gceph_quin_amino = ifelse(cephalosporin_3rd_gen & quinolone & aminoglycoside, TRUE, FALSE)) |>
-  dplyr::rename(res_3gceph = cephalosporin_3rd_gen,
-         res_quin = quinolone,
-         res_amino = aminoglycoside) |>
-  select(-c(n, cephalosporin_3rd_gen_bli)) |>
-  distinct()
-
-n_distinct(isolates5$pat_deid)
-```
-
-```{r}
-# Aminoglycosides
-isolates_amino <- isolates5 |>
-  select(-c(res_3gceph, res_quin, res_3gceph_quin, res_3gceph_quin_amino)) |>
-  distinct() |>
-  add_count(pat_deid) |>
-  filter(n == 1 | n > 1 & res_amino) |>
-  select(-n)
-
-# Quinolones
-isolates_quin <- isolates5 |>
-  select(-c(res_3gceph, res_amino, res_3gceph_quin, res_3gceph_quin_amino)) |>
-  distinct() |>
-  add_count(pat_deid) |>
-  filter(n == 1 | n > 1 & res_quin) |>
-  select(-n)
-
-# Amp-sulbactam
-isolates_amp_sul <- isolates2 |>
-  dplyr::rename(t0 = order_date) |> # Set start of follow-up
-  mutate(tf = as.Date(ifelse(status == 2, death_date, as.Date("2020-12-31"))), # Set end of follow-up
-         time = as.numeric(tf - t0),
-         time = ifelse(time < 0, 0, time)) |>
-  select(pat_deid, antibiotic, age, antibiotic_class, nonsusceptible, mdr, status, status_f, t0, tf, time) |> 
-  distinct() |>
-  mutate(res_amp_sul = ifelse(antibiotic == "ampicillin sulbactam", TRUE, FALSE)) |>
-  select(pat_deid, res_amp_sul, t0, tf, time, status, status_f) |>
-  distinct() |>
-  add_count(pat_deid) |>
-  filter(n == 1 | n > 1 & res_amp_sul) |>
-  select(-n)
-
-# 3rd gen cephs and combos, rejoin aminoglycosides and quinolones to eliminate duplicates
-isolates6 <- isolates5 |>
-  select(-c(res_quin, res_amino)) |>
-  distinct() |>
-  # Add indicator for any 1 of 3 outcomes of interest
-  mutate(dedup = ifelse(res_3gceph|res_3gceph_quin|res_3gceph_quin_amino, TRUE, FALSE)) |> 
-  add_count(pat_deid) |>
-  filter(n == 1 | n > 1 & dedup) |>
-  select(-c(n, dedup)) |>
-  left_join(isolates_amino) |>
-  left_join(isolates_quin) |>
-  left_join(isolates_amp_sul)
-
-rm(isolates_amino, isolates_quin)
-```
-
-# **Table 1**
-
-```{r}
-tab1 <- isolates6 |>
-  mutate(age_grp = case_when(age <=40 ~ 1,
+df2 <- df2 |>
+  left_join(isolate_counter) |>
+  mutate(age_grp = case_when(age <= 40 ~ 1,
                              age > 40 & age <= 60 ~ 2,
                              age > 60 & age <= 75 ~ 3,
                              TRUE ~ 4),
-         age_grp = factor(age_grp, labels = c("18-40", "41-60", "61-75", ">75")))
+         age_grp = factor(age_grp, 
+                          labels = c("18-40", "41-60", "61-75", ">75")))
+```
 
-vars <- c("age_grp", "gender", "race_eth", "isolate_source_factor", "status_f")
-factorVars <- c("age_grp", "gender", "race_eth", "isolate_source_factor", "status_f")
-tableOne <- CreateTableOne(vars = vars, data = tab1, factorVars = factorVars)
-tbl <- (print(tableOne, nonnormal = TRUE, quote = FALSE, noSpaces = TRUE, printToggle = FALSE, showAllLevels = TRUE))
+**Numbers of patients and isolates, analysis dataset**
+
+```{r}
+n_distinct(df2$pat_deid)
+n_distinct(df2$isolate_id)
+```
+
+# Descriptive statistics
+**Reduced dataset for descriptive statistics - 1 obs per patient**
+
+```{r}
+df_tb1_1st <- df2 |>
+  filter(isolate_number == 1) |>
+  select(pat_deid, age, gender, racef, ethnicityf, ses, distance_km, parent_hospital, location_type, isolate_sourcef, statusf, mdr) |>
+  distinct() |>
+  add_count(parent_hospital) |>
+  select(-n) |>
+  group_by(pat_deid) |>
+  slice(1) |>
+  ungroup()
+
+df_tb1_all <- df2 |>
+  select(pat_deid, isolate_id, age, gender, racef, ethnicityf, ses, distance_km, parent_hospital, location_type, isolate_sourcef, statusf, mdr) |>
+  distinct() |>
+  add_count(parent_hospital) |>
+  select(-n) |>
+  group_by(isolate_id) |>
+  slice(1) |>
+  ungroup()
+```
+
+## Patients
+
+```{r}
+vars <- c("age", "gender", "racef", "ethnicityf", "ses", "distance_km", "statusf")
+factorVars <- c("gender", "racef", "ethnicityf", "ses", "statusf")
+tableOne <- CreateTableOne(vars = vars, data = df_tb1_1st, strata = "mdr", factorVars = factorVars)
+tbl <- (print(tableOne, nonnormal = TRUE, quote = FALSE, noSpaces = TRUE, printToggle = FALSE, showAllLevels = TRUE, test = FALSE))
 tbl |> 
   kable("html") |>
   kable_styling()
 ```
 
-# **Mortality**
-
-## **Frequencies**
+## Isolates
 
 ```{r}
-isolates3 |>
-  tabyl(mdr, status_f) |>
-  adorn_totals(c("row", "col")) |>
-  adorn_percentages("row") |>
-  adorn_pct_formatting() |>
-  adorn_ns() |>
-  kable("html", caption = "1-year all-cause mortality and multidrug-resistance") |>
-  kable_styling()
-
-isolates3 |>
-  tabyl(any_resistance, status_f) |>
-  adorn_totals(c("row", "col")) |>
-  adorn_percentages("row") |>
-  adorn_pct_formatting() |>
-  adorn_ns() |>
-  kable("html", caption = "1-year all-cause mortality and resistance to any antibiotic class") |>
-  kable_styling()
-
-isolates6 |> 
-  tabyl(res_amp_sul, status_f) |>
-  adorn_totals(c("row", "col")) |>
-  adorn_percentages("row") |>
-  adorn_pct_formatting() |>
-  adorn_ns() |>
-  kable("html", caption = "1-year all-cause mortality and resistance to ampicillin-sulbactam") |>
-  kable_styling()
-
-isolates6 |> 
-  tabyl(res_amino, status_f) |>
-  adorn_totals(c("row", "col")) |>
-  adorn_percentages("row") |>
-  adorn_pct_formatting() |>
-  adorn_ns() |>
-  kable("html", caption = "1-year all-cause mortality and resistance to aminoglycosides") |>
-  kable_styling()
-
-isolates6 |> 
-  tabyl(res_3gceph, status_f) |>
-  adorn_totals(c("row", "col")) |>
-  adorn_percentages("row") |>
-  adorn_pct_formatting() |>
-  adorn_ns() |>
-  kable("html", caption = "1-year all-cause mortality and resistance to 3rd gen cephalosporins") |>
-  kable_styling()
-
-isolates6 |> 
-  tabyl(res_quin, status_f) |>
-  adorn_totals(c("row", "col")) |>
-  adorn_percentages("row") |>
-  adorn_pct_formatting() |>
-  adorn_ns() |>
-  kable("html", caption = "1-year all-cause mortality and resistance to quinolones") |>
-  kable_styling()
-
-isolates6 |> 
-  tabyl(res_3gceph_quin, status_f) |>
-  adorn_totals(c("row", "col")) |>
-  adorn_percentages("row") |>
-  adorn_pct_formatting() |>
-  adorn_ns() |>
-  kable("html", caption = "1-year all-cause mortality and resistance to 3rd gen cephalosporins & quinolones") |>
-  kable_styling()
-
-isolates6 |> 
-  tabyl(res_3gceph_quin_amino, status_f) |>
-  adorn_totals(c("row", "col")) |>
-  adorn_percentages("row") |>
-  adorn_pct_formatting() |>
-  adorn_ns() |>
-  kable("html", caption = "1-year all-cause mortality and resistance to 3rd gen cephalosporins, quinolones, & aminoglycosides") |>
+vars <- c("location_type", "isolate_sourcef")
+factorVars <- c("location_type", "isolate_sourcef")
+tableOne <- CreateTableOne(vars = vars, data = df_tb1_all, strata = "mdr", factorVars = factorVars)
+tbl <- (print(tableOne, nonnormal = TRUE, quote = FALSE, noSpaces = TRUE, printToggle = FALSE, showAllLevels = TRUE, test = FALSE))
+tbl |> 
+  kable("html") |>
   kable_styling()
 ```
 
-## **Survival curves**
+**Distance from provider by location type**
 
 ```{r}
-fit1 <- survfit(Surv(time, status) ~ res_3gceph, data = isolates6)
-
-km_curve_res_3gceph <- ggsurvplot(fit1,
-                       title = "3rd generation cephalosporins",
-                       censor = FALSE,
-                       conf.int = TRUE,
-                       risk.table = TRUE,
-                       pval = TRUE,
-                       tables.theme = theme_cleantable(),
-                       palette = "grey",
-                       xlim = c(1, 365),
-                       break.x.by = 60,
-                       legend = c(0.8, 0.2),
-                       legend.title = "",
-                       risk.table.y.text.col = FALSE,
-                       risk.table.height = 0.2,
-                       risk.table.fontsize = 4,
-                       legend.labs = c("Susceptible", "Nonsuceptible"))
-
-km_curve_res_3gceph <- ggpar(km_curve_res_3gceph, 
-      font.main = c(14, "bold"),
-      font.x = c(14, "bold"),
-      font.y = c(14, "bold"),
-      font.caption = c(12, "bold"), 
-      font.legend = c(12, "bold"),
-      ticks = FALSE,
-      xlab = "Days")
-
-km_curve_res_3gceph
+df2 |>
+  select(isolate_id, mdr, distance_km, location_type) |>
+  distinct() |>
+  group_by(mdr, location_type) |>
+  summarise(median(distance_km)) |> 
+  kable("html") |>
+  kable_styling()
+# 6% outpatient, wide range of locations: labs, periop, transplant, hem-onc, urg care, ENT, fam med, pulmonary specialist
 ```
 
-```{r}
-fit2 <- survfit(Surv(time, status) ~ res_quin, data = isolates6)
-
-km_curve_res_quin <- ggsurvplot(fit2,
-                       title = "Quinolones",
-                       censor = FALSE,
-                       conf.int = TRUE,
-                       risk.table = TRUE,
-                       pval = TRUE,
-                       tables.theme = theme_cleantable(),
-                       palette = "grey",
-                       xlim = c(1, 365),
-                       break.x.by = 60,
-                       legend = c(0.8, 0.2),
-                       legend.title = "",
-                       risk.table.y.text.col = FALSE,
-                       risk.table.height = 0.2,
-                       risk.table.fontsize = 4,
-                       legend.labs = c("Susceptible", "Nonsuceptible"))
-
-km_curve_res_quin <- ggpar(km_curve_res_quin, 
-      font.main = c(14, "bold"),
-      font.x = c(14, "bold"),
-      font.y = c(14, "bold"),
-      font.caption = c(12, "bold"), 
-      font.legend = c(12, "bold"),
-      ticks = FALSE,
-      xlab = "Days")
-
-km_curve_res_quin
-```
+# Functions
+**Calculate stabilized IPTW**
 
 ```{r}
-fit3 <- survfit(Surv(time, status) ~ res_3gceph_quin, data = isolates6)
+formula1 <- mdr ~ age_grp + rcs(culture_year,5) + rcs(distance_km,5) + gender + racef + ethnicityf + isolate_sourcef + location_type
+outcome_var1 <- "mdr"
+formula2 <- resistant_to_class ~ age_grp + rcs(culture_year,5) + rcs(distance_km,5) + gender + racef + ethnicityf + isolate_sourcef + location_type
+outcome_var2 <- "resistant_to_class"
 
-km_curve_res_3gceph_quin <- ggsurvplot(fit3,
-                       title = "3rd generation cephalosporins & quinolones",
-                       censor = FALSE,
-                       conf.int = TRUE,
-                       risk.table = TRUE,
-                       pval = TRUE,
-                       tables.theme = theme_cleantable(),
-                       palette = "grey",
-                       xlim = c(1, 365),
-                       break.x.by = 60,
-                       legend = c(0.8, 0.2),
-                       legend.title = "",
-                       risk.table.y.text.col = FALSE,
-                       risk.table.height = 0.2,
-                       risk.table.fontsize = 4,
-                       legend.labs = c("Susceptible", "Nonsuceptible"))
-
-km_curve_res_3gceph_quin <- ggpar(km_curve_res_3gceph_quin, 
-      font.main = c(14, "bold"),
-      font.x = c(14, "bold"),
-      font.y = c(14, "bold"),
-      font.caption = c(12, "bold"), 
-      font.legend = c(12, "bold"),
-      ticks = FALSE,
-      xlab = "Days")
-
-km_curve_res_3gceph_quin
-```
-
-```{r}
-fit4 <- survfit(Surv(time, status) ~ mdr, data = isolates6)
-
-km_curve_mdr <- ggsurvplot(fit4,
-                       title = "Multidrug-resistance",
-                       censor = FALSE,
-                       conf.int = TRUE,
-                       risk.table = TRUE,
-                       pval = TRUE,
-                       tables.theme = theme_cleantable(),
-                       palette = c("#E7B800", "#2E9FDF"),
-                       xlim = c(1, 365),
-                       break.x.by = 60,
-                       legend = "none",
-                       tables.col = "strata",
-                       risk.table.fontsize = 3,
-                       legend.labs = c("Susceptible", "Nonsuceptible"),
-                       risk.table.y.text = FALSE)
-km_curve_mdr
-```
-
-## **Hazard ratios**
-
-```{r}
-classes2 <- classes[c(1, 5, 4, 7)]
-var_names <- c("class", "hazard_ratio", "lower_ci", "upper_ci")
-
-abx_class_hr_func <- function(filter_classes){
-  hr_list <- data.frame() # Empty dataframe to store results
-
-  for (abx_class in filter_classes) {
-    filtered_data <- isolates4[isolates4$antibiotic_class == abx_class, ]
-    cox_model <- coxph(Surv(time, status) ~ nonsusceptible + rcs(age, 5), filtered_data) # Run model
-    estimate <- summary(cox_model)$coefficients[1,1] # Extract estimate name from model results
-    results <- c(abx_class, estimate, confint(cox_model)[1,]) # Extract confidence interval name from model results and add to estimate
-    hr_list <- rbind(hr_list, results) # Add results to dataframe
-  }
-  return(hr_list)
+calculate_iptw <- function(data, formula, outcome_var, trim_quantiles = c(0.01, 0.99)) {
+  ps_mod <- glm(formula = formula, family = binomial(), data = data)
+  print(tidy(ps_mod), n = Inf)
+  # Marginal probability of outcome
+  p_outcome <- mean(data[[outcome_var]])
+  # Add propensity score and calculate stabilized IPTW
+  data <- data |>
+    mutate(
+      ps = predict(ps_mod, type = "response"),
+      iptw = ifelse(
+        !!sym(outcome_var), 
+        p_outcome / ps, 
+        (1 - p_outcome) / (1 - ps)
+      ),
+      iptw = ifelse(iptw > quantile(iptw, trim_quantiles[2]), quantile(iptw, trim_quantiles[2]), iptw),
+      iptw = ifelse(iptw < quantile(iptw, trim_quantiles[1]), quantile(iptw, trim_quantiles[1]), iptw)
+    )
+  # Return modified dataset with stabilized IPTW
+  return(data)
 }
-# Get results for MDR and combinations
-fit_mdr <- coxph(Surv(time, status) ~ mdr + rcs(age,5), data = isolates6)
-results_mdr <- c("mdr", summary(fit_mdr)$coefficients[1,1], confint(fit_mdr)[1,])
+```
 
-fit_ceph_quin <- coxph(Surv(time, status) ~ res_3gceph_quin + rcs(age,5), data = isolates6)
-results_ceph_quin <- c("3rd gen ceph + quinolone", summary(fit_ceph_quin)$coefficients[1,1], confint(fit_ceph_quin)[1,])
+**Generate survival data for cumulative incidence curves**
 
-fit_amp_sul <- coxph(Surv(time, status) ~ res_amp_sul + rcs(age,5), data = isolates6)
-results_amp_sul <- c("ampicillin sulbactam", summary(fit_amp_sul)$coefficients[1,1], confint(fit_amp_sul)[1,])
+```{r}
+generate_survival_data <- function(data, time_var, status_var, ses_var, group_var, weights_var, cluster_var) {
+  # Filter data subsets
+  data_susceptible <- data |> filter(!.data[[group_var]])
+  data_nonsusceptible <- data |> filter(.data[[group_var]])
+  # Fit Cox models
+  cox_susceptible <- coxph(
+    formula = as.formula(paste0("Surv(", time_var, ", ", status_var, ") ~ ", ses_var)),
+    weights = data_susceptible[[weights_var]],
+    cluster = data_susceptible[[cluster_var]],
+    data = data_susceptible
+  )
+  cox_nonsusceptible <- coxph(
+    formula = as.formula(paste0("Surv(", time_var, ", ", status_var, ") ~ ", ses_var)),
+    weights = data_nonsusceptible[[weights_var]],
+    cluster = data_nonsusceptible[[cluster_var]],
+    data = data_nonsusceptible
+  )
+  # Create new data frame for predictions
+  newdata_ses <- data.frame(
+    ses = factor(c("High", "Middle", "Low"), levels = levels(data[[ses_var]]))
+  )
+  # Extract cumulative incidence data for each group
+  surv_fit_susceptible <- survfit(cox_susceptible, newdata = newdata_ses)
+  surv_fit_nonsusceptible <- survfit(cox_nonsusceptible, newdata = newdata_ses)
+  # Convert survival objects to data frames
+  df_susceptible_surv <- data.frame(
+    time = rep(surv_fit_susceptible$time, times = length(levels(data[[ses_var]]))),
+    surv = as.vector(1 - surv_fit_susceptible$surv), # Convert to cumulative incidence
+    strata = factor(rep(levels(data[[ses_var]]), each = length(surv_fit_susceptible$time)), 
+                    levels = levels(data[[ses_var]])),
+    isolate_type = "Susceptible"
+  )
+    df_nonsusceptible_surv <- data.frame(
+    time = rep(surv_fit_nonsusceptible$time, times = length(levels(data[[ses_var]]))),
+    surv = as.vector(1 - surv_fit_nonsusceptible$surv), # Convert to cumulative incidence
+    strata = factor(rep(levels(data[[ses_var]]), each = length(surv_fit_nonsusceptible$time)), 
+                    levels = levels(data[[ses_var]])),
+    isolate_type = "Nonsusceptible"
+  )
+  # Combine and finalize survival data
+  df_surv <- df_susceptible_surv |>
+    rbind(df_nonsusceptible_surv) |>
+    filter(strata != "Middle") |>
+    mutate(
+      group = paste(strata, isolate_type, sep = ", "),
+      group = factor(
+        group,
+        levels = c("High, Susceptible", "Low, Susceptible", "High, Nonsusceptible", "Low, Nonsusceptible"),
+        labels = c("High SES, susceptible", "Low SES, susceptible", 
+                   "High SES, non-susceptible", "Low SES, non-susceptible")
+      )
+    )
+  return(df_surv)
+}
+```
 
-hazard_ratios_class <- abx_class_hr_func(classes2) |>
-  setNames(var_names) |>
-  rbind(results_amp_sul) |>
-  rbind(results_mdr) |>
-  rbind(results_ceph_quin) |>
-  mutate_at(c(2:4), as.numeric) |>
-  mutate_at(c(2:4), exp) |>
-  mutate_if(is.numeric, round, digits=2)
+**Chart formats**
 
-hazard_ratios_class |>
-  kable("html", caption = "Age-adjusted hazard ratios for mortality at 1 year") |>
+```{r}
+plt_theme <- theme_minimal() +
+  theme(
+    legend.position = "top",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    legend.direction = "horizontal",
+    legend.box = "horizontal",
+    legend.key.height = unit(0.2, "cm"), # Adjust vertical spacing
+    legend.key.width = unit(0.5, "cm")   # Adjust horizontal spacing
+  )
+plt_guides <- guides(
+  color = guide_legend(nrow = 2, byrow = TRUE),
+  linetype = guide_legend(nrow = 2, byrow = TRUE)
+)
+plt_color <- scale_color_manual(
+  values = c(
+    "High SES, susceptible" = "black",
+    "Low SES, susceptible" = "grey",
+    "High SES, non-susceptible" = "black",
+    "Low SES, non-susceptible" = "grey"
+  )
+)
+plt_linetype <- scale_linetype_manual(
+  values = c(
+    "High SES, susceptible" = "solid",
+    "Low SES, susceptible" = "solid",
+    "High SES, non-susceptible" = "dotted",
+    "Low SES, non-susceptible" = "dotted"
+  )
+)
+```
+
+# Mortality analysis
+## MDR
+
+```{r}
+# 1st isolate only
+df_mdr_1st <- df2 |>
+  select(-c(isolate_id, parent_hospital, department_name, organism_name, antibiotic_class, resistant_to_class)) |>
+  distinct() |>
+  drop_na() |>
+  group_by(pat_deid) |>
+  slice_min(isolate_number) |>
+  slice(1) |> # Remove 8 duplicates, different locations for same isolate
+  ungroup()
+# All isolates included
+df_mdr_all <- df2 |>
+  select(-c(parent_hospital, department_name, organism_name, antibiotic_class, resistant_to_class)) |>
+  distinct() |>
+  drop_na() |>
+  group_by(pat_deid, isolate_number) |>
+  slice(1) |> # Remove 8 duplicates, different locations for same isolate
+  ungroup()
+```
+
+#### Frequencies
+
+```{r results='asis'}
+df_mdr_all |>
+  tabyl(mdr, statusf) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages() |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  adorn_title() |> 
+  kable("html", caption = "Mortality by susceptibility") |>
   kable_styling()
+
+df_mdr_all |>
+  tabyl(mdr, statusf, ses) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages() |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  adorn_title() |>
+  (\(x) walk2(names(x), x, ~ print(kable(.y, caption = paste("Mortality by susceptibility and SES status:", .x)))))()
+```
+
+#### Model results
+
+```{r}
+# Fit propensity score model for resistance
+# Not enough variability for repeated measures and no difference using 1st isolate vs all
+# Removed age because it is colinear with culture_year
+df_mdr_all <- calculate_iptw(
+  data = df_mdr_all,
+  formula = formula1,
+  outcome_var = outcome_var1
+)
+# Evaluate weights
+# summary(df_mdr_all$iptw)
+# ggplot(df_mdr_all, aes(x = ps, fill = mdr)) +
+#   geom_density(alpha = 0.5) +
+#   theme_minimal() +
+#   scale_fill_brewer(palette = "Set1")
 ```
 
 ```{r}
-# plots <- list()
-# plots[[1]] <- km_curve_res_3gceph
-# plots[[2]] <- km_curve_res_quin
-# plots[[3]] <- km_curve_res_3gceph_quin
-# 
-# fig <- arrange_ggsurvplots(plots,
-#                            surv.plot.height = 1,
-#                            risk.table.height = 0.3,
-#                            ncol = 3,
-#                            nrow = 1)
-# 
-# grid.draw.ggsurvplot <- function(x){
-#   survminer:::print.ggsurvplot(x, newpage = FALSE)
-# }
-# ggsave("km_curve_res_3gceph.tiff", plot = km_curve_res_3gceph, dpi=300, width = 6, height = 7, units = "in")
-# ggsave("km_curve_res_quin.tiff", plot = km_curve_res_quin, dpi=300, width = 6, height = 7, units = "in")
-# ggsave("km_curve_res_3gceph_quin.tiff", plot = km_curve_res_3gceph_quin, dpi=300, width = 6, height = 7, units = "in")
+# Including covariates in model causes proportional hazards violation
+cox_mdr_high <- coxph(Surv(ftime, status) ~ mdr,
+                      weights = iptw,
+                      cluster = pat_deid,
+                 data = df_mdr_all |> filter(ses == "High"))
+summary(cox_mdr_high)
+cox.zph(cox_mdr_high)
+
+cox_mdr_low <- coxph(Surv(ftime, status) ~ mdr,
+                     weights = iptw,
+                     cluster = pat_deid,
+                 data = df_mdr_all |> filter(ses == "Low"))
+summary(cox_mdr_low)
+cox.zph(cox_mdr_low)
+rm(cox_mdr_low, cox_mdr_high)
+# High: HR 1.08, 0.89-1.31
+# Low: HR 1.17, 0.99-1.39
 ```
 
+<!-- ```{r} -->
+<!-- glm_mdr <- glm(status ~ mdr, -->
+<!--                family = gaussian(link = "identity"), -->
+<!--                weights = iptw, -->
+<!--                data = df_mdr |> filter(ses == "Low")) -->
+<!-- risk_diff <- coef(summary(glm_mdr))["mdrTRUE", "Estimate"] -->
+<!-- se_risk_diff <- coef(summary(glm_mdr))["mdrTRUE", "Std. Error"] -->
+<!-- round(risk_diff - 1.96 * se_risk_diff,3) * 100 -->
+<!-- round(risk_diff + 1.96 * se_risk_diff,3) * 100 -->
+<!-- ``` -->
+
+#### Cumulative incidence curves
+
+```{r}
+df_surv <- generate_survival_data(
+  data = df_mdr_all,
+  time_var = "ftime",
+  status_var = "status",
+  ses_var = "ses",
+  group_var = "mdr",
+  weights_var = "iptw",
+  cluster_var = "pat_deid"
+)
+```
+
+```{r}
+chart_mdr <- ggplot(df_surv, aes(x = time, y = surv, color = group, linetype = group)) +
+  plt_color +
+  plt_linetype +
+  plt_theme +
+  plt_guides +
+  geom_smooth(se = FALSE, method = "loess", span = 1) +
+  labs(x = "Days", y = "Cumulative Incidence") +
+  scale_x_continuous(limits = c(0, 30), breaks = seq(0, 30, 5)) +
+  scale_y_continuous(limits = c(0, 0.35), breaks = seq(0, 0.35, 0.05))
+chart_mdr
+# ggsave(filename = "plots/fig_mdr.tiff", plot = chart_mdr, device="tiff", dpi=500, width = 6, height = 5)
+```
+
+## Antibiotic classes
+### Aminoglycosides
+
+```{r}
+df_amino <- df2 |>
+  filter(antibiotic_class == "aminoglycoside") |>
+  select(-c(parent_hospital, department_name, organism_name, t0, tf, antibiotic_class, mdr)) |>
+  distinct() |>
+  drop_na()
+```
+
+#### Frequencies
+
+```{r results='asis'}
+df_amino |>
+  tabyl(resistant_to_class, statusf) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages() |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  adorn_title() |> 
+  kable("html", caption = "Mortality by susceptibility") |>
+  kable_styling()
+
+df_amino |>
+  tabyl(resistant_to_class, statusf, ses) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages() |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  adorn_title() |>
+  (\(x) walk2(names(x), x, ~ print(kable(.y, caption = paste("Mortality by susceptibility and SES status:", .x)))))()
+```
+
+#### Model results
+
+```{r}
+# Fit propensity score model for resistance
+df_amino <- calculate_iptw(
+  data = df_amino,
+  formula = formula2,
+  outcome_var = outcome_var2
+)
+# Evaluate weights
+# summary(df_amino$iptw)
+# ggplot(df_amino, aes(x = ps, fill = resistant_to_class)) +
+#   geom_density(alpha = 0.5) +
+#   theme_minimal() +
+#   scale_fill_brewer(palette = "Set1")
+```
+
+```{r}
+cox_amino_high <- coxph(Surv(ftime, status) ~ resistant_to_class,
+                 weights = iptw,
+                 cluster = pat_deid,
+                 data = df_amino |> filter(ses == "High"))
+summary(cox_amino_high)
+cox.zph(cox_amino_high)
+
+cox_amino_low <- coxph(Surv(ftime, status) ~ resistant_to_class,
+                 weights = iptw,
+                 data = df_amino |> filter(ses == "Low"))
+summary(cox_amino_low)
+cox.zph(cox_amino_low)
+rm(cox_amino_low, cox_amino_high)
+# High: HR 0.87, 0.64-1.17
+# Low: HR 1.35, 1.08-1.68
+```
+
+<!-- ```{r} -->
+<!-- glm_amino <- glm(status ~ resistant_to_class, -->
+<!--                family = gaussian(link = "identity"), -->
+<!--                weights = iptw, -->
+<!--                data = df_amino |> filter(ses == "High")) -->
+<!-- risk_diff <- coef(summary(glm_amino))["resistant_to_classTRUE", "Estimate"] -->
+<!-- se_risk_diff <- coef(summary(glm_amino))["resistant_to_classTRUE", "Std. Error"] -->
+<!-- risk_diff * 100 -->
+<!-- round(risk_diff - 1.96 * se_risk_diff,3) * 100 -->
+<!-- round(risk_diff + 1.96 * se_risk_diff,3) * 100 -->
+<!-- ``` -->
+
+#### Cumulative incidence curves
+
+```{r}
+df_surv <- generate_survival_data(
+  data = df_amino,
+  time_var = "ftime",
+  status_var = "status",
+  ses_var = "ses",
+  group_var = "resistant_to_class",
+  weights_var = "iptw",
+  cluster_var = "pat_deid"
+)
+```
+
+```{r}
+chart_amino <- ggplot(df_surv, aes(x = time, y = surv, color = group, linetype = group)) +
+  plt_color +
+  plt_linetype +
+  plt_theme +
+  plt_guides +
+  geom_smooth(se = FALSE, method = "loess", span = 1) +
+  labs(x = "Days", y = "Cumulative Incidence") +
+  scale_x_continuous(limits = c(0, 30), breaks = seq(0, 30, 5)) +
+  scale_y_continuous(limits = c(0, 0.35), breaks = seq(0, 0.35, 0.05))
+chart_amino
+# ggsave(filename = "plots/fig_amino.tiff", plot = chart_amino, device="tiff", dpi=500, width = 6, height = 5)
+```
+
+### Carbapenems
+
+```{r}
+df_carba <- df2 |>
+  filter(antibiotic_class == "carbapenem") |>
+  select(-c(isolate_id, parent_hospital, department_name, organism_name, t0, tf, antibiotic_class, mdr)) |>
+  distinct() |>
+  drop_na()
+```
+
+#### Frequencies
+
+```{r results='asis'}
+df_carba |>
+  tabyl(resistant_to_class, statusf) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages() |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  adorn_title() |> 
+  kable("html", caption = "Mortality by susceptibility") |>
+  kable_styling()
+
+df_carba |>
+  tabyl(resistant_to_class, statusf, ses) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages() |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  adorn_title() |>
+  (\(x) walk2(names(x), x, ~ print(kable(.y, caption = paste("Mortality by susceptibility and SES status:", .x)))))()
+```
+
+#### Model results
+
+```{r}
+# Fit propensity score model for resistance
+df_carba <- calculate_iptw(
+  data = df_carba,
+  formula = formula2,
+  outcome_var = outcome_var2
+)
+# Evaluate weights
+# summary(df_carba$iptw)
+# ggplot(df_carba, aes(x = ps, fill = resistant_to_class)) +
+#   geom_density(alpha = 0.5) +
+#   theme_minimal() +
+#   scale_fill_brewer(palette = "Set1")
+```
+
+```{r}
+cox_carba_high <- coxph(Surv(ftime, status) ~ resistant_to_class,
+                 weights = iptw,
+                 cluster = pat_deid,
+                 data = df_carba |> filter(ses == "High"))
+summary(cox_carba_high)
+cox.zph(cox_carba_high)
+
+cox_carba_low <- coxph(Surv(ftime, status) ~ resistant_to_class,
+                 weights = iptw,
+                 cluster = pat_deid,
+                 data = df_carba |> filter(ses == "Low"))
+summary(cox_carba_low)
+cox.zph(cox_carba_low)
+rm(cox_carba_low, cox_carba_high)
+# High: HR 0.91, 0.46-1.78
+# Low: HR 1.47, 0.93-2.31
+```
+
+<!-- ```{r} -->
+<!-- glm_carba <- glm(status ~ resistant_to_class, -->
+<!--                family = gaussian(link = "identity"), -->
+<!--                weights = iptw, -->
+<!--                data = df_carba |> filter(ses == "High")) -->
+<!-- risk_diff <- coef(summary(glm_carba))["resistant_to_classTRUE", "Estimate"] -->
+<!-- se_risk_diff <- coef(summary(glm_carba))["resistant_to_classTRUE", "Std. Error"] -->
+<!-- risk_diff * 100 -->
+<!-- round(risk_diff - 1.96 * se_risk_diff,3) * 100 -->
+<!-- round(risk_diff + 1.96 * se_risk_diff,3) * 100 -->
+<!-- ``` -->
+
+#### Cumulative incidence curves
+
+```{r}
+df_surv <- generate_survival_data(
+  data = df_carba,
+  time_var = "ftime",
+  status_var = "status",
+  ses_var = "ses",
+  group_var = "resistant_to_class",
+  weights_var = "iptw",
+  cluster_var = "pat_deid"
+)
+```
+
+```{r}
+chart_carba <- ggplot(df_surv, aes(x = time, y = surv, color = group, linetype = group)) +
+  plt_color +
+  plt_linetype +
+  plt_theme +
+  plt_guides +
+  geom_smooth(se = FALSE, method = "loess", span = 1) +
+  labs(x = "Days", y = "Cumulative Incidence") +
+  scale_x_continuous(limits = c(0, 30), breaks = seq(0, 30, 5)) +
+  scale_y_continuous(limits = c(0, 0.35), breaks = seq(0, 0.35, 0.05))
+chart_carba
+# ggsave(filename = "plots/fig_carba.tiff", plot = chart_carba, device="tiff", dpi=500, width = 6, height = 5)
+```
+
+### 3rd/4th generation cephalosporins
+
+```{r}
+df_ceph <- df2 |>
+  filter(antibiotic_class == "cephalosporin") |>
+  select(-c(parent_hospital, department_name, organism_name, t0, tf, antibiotic_class, mdr)) |>
+  distinct() |>
+  drop_na()
+n_distinct(df_ceph$pat_deid)
+```
+
+#### Frequencies
+
+```{r results='asis'}
+df_ceph |>
+  tabyl(resistant_to_class, statusf) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages() |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  adorn_title() |> 
+  kable("html", caption = "Mortality by susceptibility") |>
+  kable_styling()
+
+df_ceph |>
+  tabyl(resistant_to_class, statusf, ses) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages() |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  adorn_title() |>
+  (\(x) walk2(names(x), x, ~ print(kable(.y, caption = paste("Mortality by susceptibility and SES status:", .x)))))()
+```
+
+#### Model results
+
+```{r}
+# Fit propensity score model for resistance
+df_ceph <- calculate_iptw(
+  data = df_ceph,
+  formula = formula2,
+  outcome_var = outcome_var2
+)
+# Evaluate weights
+# summary(df_ceph$iptw)
+# ggplot(df_ceph, aes(x = ps, fill = resistant_to_class)) +
+#   geom_density(alpha = 0.5) +
+#   theme_minimal() +
+#   scale_fill_brewer(palette = "Set1")
+```
+
+```{r}
+cox_ceph_high <- coxph(Surv(ftime, status) ~ resistant_to_class,
+                 weights = iptw,
+                 cluster = pat_deid,
+                 data = df_ceph |> filter(ses == "High"))
+summary(cox_ceph_high)
+cox.zph(cox_ceph_high)
+
+cox_ceph_low <- coxph(Surv(ftime, status) ~ resistant_to_class,
+                 weights = iptw,
+                 data = df_ceph |> filter(ses == "Low"))
+summary(cox_ceph_low)
+cox.zph(cox_ceph_low)
+rm(cox_ceph_low, cox_ceph_high)
+# High: HR 1.31, 1.06-1.61
+# Low: HR 1.30, 1.08-1.56
+```
+
+<!-- ```{r} -->
+<!-- glm_ceph <- glm(status ~ resistant_to_class, -->
+<!--                family = gaussian(link = "identity"), -->
+<!--                weights = iptw, -->
+<!--                data = df_ceph |> filter(ses == "High")) -->
+
+<!-- risk_diff <- coef(summary(glm_ceph))["resistant_to_classTRUE", "Estimate"] -->
+<!-- se_risk_diff <- coef(summary(glm_ceph))["resistant_to_classTRUE", "Std. Error"] -->
+<!-- round(risk_diff - 1.96 * se_risk_diff,3) * 100 -->
+<!-- round(risk_diff + 1.96 * se_risk_diff,3) * 100 -->
+<!-- ``` -->
+
+#### Cumulative incidence curves
+
+```{r}
+df_surv <- generate_survival_data(
+  data = df_ceph,
+  time_var = "ftime",
+  status_var = "status",
+  ses_var = "ses",
+  group_var = "resistant_to_class",
+  weights_var = "iptw",
+  cluster_var = "pat_deid"
+)
+```
+
+```{r}
+chart_ceph <- ggplot(df_surv, aes(x = time, y = surv, color = group, linetype = group)) +
+  plt_color +
+  plt_linetype +
+  plt_theme +
+  plt_guides +
+  geom_smooth(se = FALSE, method = "loess", span = 1) +
+  labs(x = "Days", y = "Cumulative Incidence") +
+  scale_x_continuous(limits = c(0, 30), breaks = seq(0, 30, 5)) +
+  scale_y_continuous(limits = c(0, 0.35), breaks = seq(0, 0.35, 0.05))
+chart_ceph
+# ggsave(filename = "plots/fig_ceph.tiff", plot = chart_ceph, device="tiff", dpi=500, width = 6, height = 5)
+```
+
+### Penicillin + Beta-lactamase inhibitor
+
+```{r}
+df_penbli <- df2 |>
+  filter(antibiotic_class == "penicillins_bli") |>
+  select(-c(isolate_id, parent_hospital, department_name, organism_name, t0, tf, antibiotic_class, mdr)) |>
+  distinct() |>
+  drop_na()
+```
+
+#### Frequencies
+
+```{r results='asis'}
+df_penbli |>
+  tabyl(resistant_to_class, statusf) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages() |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  adorn_title() |> 
+  kable("html", caption = "Mortality by susceptibility") |>
+  kable_styling()
+
+df_penbli |>
+  tabyl(resistant_to_class, statusf, ses) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages() |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  adorn_title() |>
+  (\(x) walk2(names(x), x, ~ print(kable(.y, caption = paste("Mortality by susceptibility and SES status:", .x)))))()
+```
+
+#### Model results
+
+```{r}
+# Fit propensity score model for resistance
+df_penbli <- calculate_iptw(
+  data = df_penbli,
+  formula = formula2,
+  outcome_var = outcome_var2
+)
+# Evaluate weights
+# summary(df_penbli$iptw)
+# ggplot(df_penbli, aes(x = ps, fill = resistant_to_class)) +
+#   geom_density(alpha = 0.5) +
+#   theme_minimal() +
+#   scale_fill_brewer(palette = "Set1")
+```
+
+```{r}
+cox_penbli_high <- coxph(Surv(ftime, status) ~ resistant_to_class,
+                 weights = iptw,
+                 cluster = pat_deid,
+                 data = df_penbli |> filter(ses == "High"))
+summary(cox_penbli_high)
+cox.zph(cox_penbli_high)
+
+cox_penbli_low <- coxph(Surv(ftime, status) ~ resistant_to_class,
+                 weights = iptw,
+                 data = df_penbli |> filter(ses == "Low"))
+summary(cox_penbli_low)
+cox.zph(cox_penbli_low)
+rm(cox_penbli_low, cox_penbli_high)
+# High: HR 1.01, 0.84-1.22
+# Low: HR 1.08, 0.93-1.27
+```
+
+<!-- ```{r} -->
+<!-- glm_penbli <- glm(status ~ resistant_to_class, -->
+<!--                family = gaussian(link = "identity"), -->
+<!--                weights = iptw, -->
+<!--                data = df_penbli |> filter(ses == "High")) -->
+<!-- risk_diff <- coef(summary(glm_penbli))["resistant_to_classTRUE", "Estimate"] -->
+<!-- se_risk_diff <- coef(summary(glm_penbli))["resistant_to_classTRUE", "Std. Error"] -->
+<!-- round(risk_diff - 1.96 * se_risk_diff,3) * 100 -->
+<!-- round(risk_diff + 1.96 * se_risk_diff,3) * 100 -->
+<!-- ``` -->
+
+#### Cumulative incidence curves
+
+```{r}
+df_surv <- generate_survival_data(
+  data = df_penbli,
+  time_var = "ftime",
+  status_var = "status",
+  ses_var = "ses",
+  group_var = "resistant_to_class",
+  weights_var = "iptw",
+  cluster_var = "pat_deid"
+)
+```
+
+```{r}
+chart_pen_bli <- ggplot(df_surv, aes(x = time, y = surv, color = group, linetype = group)) +
+  plt_color +
+  plt_linetype +
+  plt_theme +
+  plt_guides +
+  geom_smooth(se = FALSE, method = "loess", span = 1) +
+  labs(x = "Days", y = "Cumulative Incidence") +
+  scale_x_continuous(limits = c(0, 30), breaks = seq(0, 30, 5)) +
+  scale_y_continuous(limits = c(0, 0.35), breaks = seq(0, 0.35, 0.05))
+chart_pen_bli
+# ggsave(filename = "plots/fig_penbli.tiff", plot = chart_pen_bli, device="tiff", dpi=500, width = 6, height = 5)
+```
+
+### Quinolones
+
+```{r}
+df_quin <- df2 |>
+  filter(antibiotic_class == "quinolone") |>
+  select(-c(parent_hospital, department_name, organism_name, t0, tf, antibiotic_class, mdr)) |>
+  distinct() |>
+  drop_na()
+```
+
+#### Frequencies
+
+```{r results='asis'}
+df_quin |>
+  tabyl(resistant_to_class, statusf) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages() |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  adorn_title() |> 
+  kable("html", caption = "Mortality by susceptibility") |>
+  kable_styling()
+
+df_quin |>
+  tabyl(resistant_to_class, statusf, ses) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages() |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  adorn_title() |>
+  (\(x) walk2(names(x), x, ~ print(kable(.y, caption = paste("Mortality by susceptibility and SES status:", .x)))))()
+```
+
+#### Model results
+
+```{r}
+# Fit propensity score model for resistance
+df_quin <- calculate_iptw(
+  data = df_quin,
+  formula = formula2,
+  outcome_var = outcome_var2
+)
+# Evaluate weights
+# summary(df_quin$iptw)
+# ggplot(df_quin, aes(x = ps, fill = resistant_to_class)) +
+#   geom_density(alpha = 0.5) +
+#   theme_minimal() +
+#   scale_fill_brewer(palette = "Set1")
+```
+
+```{r}
+cox_quin_high <- coxph(Surv(ftime, status) ~ resistant_to_class,
+                 weights = iptw,
+                 cluster = pat_deid,
+                 data = df_quin |> filter(ses == "High"))
+summary(cox_quin_high)
+cox.zph(cox_quin_high)
+
+cox_quin_low <- coxph(Surv(ftime, status) ~ resistant_to_class,
+                 weights = iptw,
+                 cluster = pat_deid,
+                 data = df_quin |> filter(ses == "Low"))
+summary(cox_quin_low)
+cox.zph(cox_quin_low)
+rm(cox_quin_low, cox_quin_high)
+# High: HR 1.15, 0.95-1.41
+# Low: HR 1.14, 0.96-1.36
+```
+
+<!-- ```{r} -->
+<!-- glm_quin <- glm(status ~ resistant_to_class, -->
+<!--                family = gaussian(link = "identity"), -->
+<!--                weights = iptw, -->
+<!--                data = df_quin |> filter(ses == "High")) -->
+<!-- risk_diff <- coef(summary(glm_quin))["resistant_to_classTRUE", "Estimate"] -->
+<!-- se_risk_diff <- coef(summary(glm_quin))["resistant_to_classTRUE", "Std. Error"] -->
+<!-- round(risk_diff - 1.96 * se_risk_diff,3) * 100 -->
+<!-- round(risk_diff + 1.96 * se_risk_diff,3) * 100 -->
+<!-- ``` -->
+
+#### Cumulative incidence curves
+
+```{r}
+df_surv <- generate_survival_data(
+  data = df_quin,
+  time_var = "ftime",
+  status_var = "status",
+  ses_var = "ses",
+  group_var = "resistant_to_class",
+  weights_var = "iptw",
+  cluster_var = "pat_deid"
+)
+```
+
+```{r}
+chart_quin <- ggplot(df_surv, aes(x = time, y = surv, color = group, linetype = group)) +
+  plt_color +
+  plt_linetype +
+  plt_theme +
+  plt_guides +
+  geom_smooth(se = FALSE, method = "loess", span = 1) +
+  labs(x = "Days", y = "Cumulative Incidence") +
+  scale_x_continuous(limits = c(0, 30), breaks = seq(0, 30, 5)) +
+  scale_y_continuous(limits = c(0, 0.35), breaks = seq(0, 0.35, 0.05))
+chart_quin
+# ggsave(filename = "plots/fig_quin.tiff", plot = chart_quin, device="tiff", dpi=500, width = 6, height = 5)
+```
+
+# Forest plot
+
+```{r}
+# Input data
+df_forest_plot <- data.frame(
+  antibiotic = c(
+    "Aminoglycoside", "Carbapenem", "Cephalosporin, 3rd/4th generation", 
+    "Penicillin + beta-lactamase inhibitor", "Quinolone", "Multidrug resistance"
+  ),
+  ses = c(rep("High SES", 6), rep("Low SES", 6)),
+  hr = c(0.87, 0.91, 1.31, 1.01, 1.15, 1.08, 1.35, 1.47, 1.30, 1.08, 1.14, 1.17),
+  lci = c(0.64, 0.46, 1.06, 0.84, 0.95, 0.89, 1.08, 0.93, 1.08, 0.93, 0.96, 0.99),
+  uci = c(1.17, 1.78, 1.61, 1.22, 1.41, 1.31, 1.68, 2.31, 1.56, 1.27, 1.36, 1.39)
+)
+
+df_forest_plot <- df_forest_plot |>
+  mutate(antibiotic = factor(antibiotic, levels = c("Aminoglycoside", "Carbapenem", "Cephalosporin, 3rd/4th generation", "Penicillin + beta-lactamase inhibitor", "Quinolone", "Multidrug resistance")))
+
+chart_forest <- ggplot(df_forest_plot, aes(y = antibiotic, x = hr, xmin = lci, xmax = uci, color = ses)) +
+  ggstance::geom_pointrangeh(position = position_dodge(width = 0.6)) +
+  geom_vline(xintercept = 1, linetype = "dashed") +
+  labs(
+    x = "Hazard Ratio",
+    y = ""
+  ) +
+  plt_theme +
+  scale_color_manual(values = c("High SES" = "black", "Low SES" = "grey")) +
+  scale_y_discrete(limits = rev) +
+  scale_x_log10()
+chart_forest
+# ggsave(filename = "plots/fig_forest_plot.tiff", plot = chart_forest, device="tiff", dpi=500, width = 7, height = 5)
+```
