@@ -36,30 +36,35 @@ packages(c("haven", "readxl", "readr", "tidyverse" , "data.table" , "naniar", "r
 #| echo: false
 setwd("C:/Users/henderh/OneDrive - University of North Carolina at Chapel Hill/Projects/AMR/AMR_mapping_project/AMR mortality analysis/mortality_rproj/")
 
-data_all <- readRDS("Z:/Van Duin_David_IRB23-2326/amr_mapping_rproj/data files/all_species_full_data.rds")
+data_all <- readRDS("Z:/Van Duin_David_IRB23-2326/amr_mapping_rproj/data files/all_species_combined.rds")
 adi_nc_zip <- read_excel("adi_nc_zip.xlsx")
 distance <- read_rds("distance_0106.rds")
 unc_locations <- read_excel("unc_locations.xlsx")
 nonunc_locations <- read_excel("nonunc_locations.xlsx")
+# adi_nc_zip <- read.csv("C:/Users/henderh/OneDrive - University of North Carolina at Chapel Hill/Projects/AMR/AMR_mapping_project/NC data/NC_2022_ADI_Zip Code.csv")
 ```
 
 ```{r}
 locations <- unc_locations |>
   bind_rows(nonunc_locations) |>
   select(-address)
-# Process ADI ZIP code data
+# # Process ADI ZIP code data
 # adi_nc_zip1 <- adi_nc_zip |>
 #   clean_names() |>
+#   mutate_all(tolower) |>
 #   mutate(zip_code = str_sub(zip_4, 1, 5)) |>
 #   select(zip_code, adi_staterank) |>
+#   filter(as.numeric(zip_code) %in% 27006:28909) |>
 #   mutate(adi_staterank = as.numeric(adi_staterank)) |>
-#   filter(!is.na(adi_staterank)) |>
+#   filter(!is.na(adi_staterank))
+# adi_nc_zip2 <- adi_nc_zip1 |>
+#   rename(adi_decile = adi_staterank) |>
 #   group_by(zip_code) |>
-#   mutate(adi = median(adi_staterank),
-#          adi_tertile = case_when(adi %in% 1:3 ~ 1,
-#                                  adi %in% 4:7 ~ 2,
-#                                  adi %in% 8:10 ~ 3)) |>
-#   select(-adi_staterank) |>
+#   mutate(median_adi_decile = median(adi_decile),
+#          adi_category = case_when(median_adi_decile %in% 1:3 ~ 1,
+#                                  median_adi_decile %in% 4:7 ~ 2,
+#                                  median_adi_decile %in% 8:10 ~ 3)) |>
+#   select(-adi_decile) |>
 #   distinct()
 ```
 
@@ -88,7 +93,7 @@ df <- data_all |>
   select(pat_deid, isolate_id, age, gender, racef, ethnicityf, zip_code, parent_hospital, department_name, isolate_sourcef, organism_name, antibiotic_class, resistant_to_class, mdr, status, statusf, t0, tf, ftime, culture_year) |> 
   distinct() |>
   left_join(adi_nc_zip |> mutate(zip_code = as.character(zip_code),
-                                 adi_tertile = factor(adi_tertile, labels = c("Low", "Middle", "High"))), 
+                                 adi_category = factor(adi_category, labels = c("Low", "Middle", "High"))), 
             relationship = "many-to-many")
 
 df |>
@@ -110,10 +115,10 @@ n_distinct(df$isolate_id)
 df1 <- df |>
   filter(antibiotic_class %in% c("aminoglycoside", "carbapenem", "cephalosporin_3rd_gen", "cephalosporin_4th_gen", "penicillins_bli", "quinolone"),
          gender %in% c("male", "female"),
-         isolate_sourcef %in% c("blood", "resp", "other"))  |>
-  mutate(isolate_sourcef = factor(isolate_sourcef, levels = c("blood", "resp", "other")))|>
-  mutate(antibiotic_class = ifelse(str_detect(antibiotic_class, "3|4"), "cephalosporin", antibiotic_class)) |>
-  filter(as.numeric(zip_code) %in% 27006:28909)
+         isolate_sourcef %in% c("blood", "resp", "other"),
+         as.numeric(zip_code) %in% 27006:28909)  |>
+  mutate(isolate_sourcef = factor(isolate_sourcef, levels = c("blood", "resp", "other")),
+         antibiotic_class = ifelse(str_detect(antibiotic_class, "3|4"), "cephalosporin", antibiotic_class))
 # For calculating distances
 # dept_zip <- df1 |>
 #   select(zip_code, parent_hospital, department_name) |>
@@ -161,7 +166,7 @@ n_distinct(df2$isolate_id)
 # 1 obs per patient
 df_tb1_1st <- df2 |>
   filter(isolate_number == 1) |>
-  select(pat_deid, age, gender, racef, ethnicityf, adi_tertile, distance_km, parent_hospital, location_type, isolate_sourcef, statusf, mdr) |>
+  select(pat_deid, age, gender, racef, ethnicityf, adi_category, distance_km, parent_hospital, location_type, isolate_sourcef, statusf, mdr) |>
   distinct() |>
   add_count(parent_hospital) |>
   select(-n) |>
@@ -170,7 +175,7 @@ df_tb1_1st <- df2 |>
   ungroup()
 # 1 obs per isolate
 df_tb1_all <- df2 |>
-  select(pat_deid, isolate_id, age, gender, racef, ethnicityf, adi_tertile, distance_km, parent_hospital, location_type, isolate_sourcef, statusf, mdr) |>
+  select(pat_deid, isolate_id, age, gender, racef, ethnicityf, adi_category, distance_km, parent_hospital, location_type, isolate_sourcef, statusf, mdr) |>
   distinct() |>
   add_count(parent_hospital) |>
   select(-n) |>
@@ -184,7 +189,7 @@ df_tb1_all <- df2 |>
 ```{r}
 vars <- c("age", "gender", "racef", "ethnicityf", "distance_km", "statusf")
 factorVars <- c("gender", "racef", "ethnicityf", "statusf")
-tableOne <- CreateTableOne(vars = vars, data = df_tb1_1st, strata = "adi_tertile", factorVars = factorVars)
+tableOne <- CreateTableOne(vars = vars, data = df_tb1_1st, strata = "adi_category", factorVars = factorVars)
 tbl <- (print(tableOne, nonnormal = TRUE, quote = FALSE, noSpaces = TRUE, printToggle = FALSE, showAllLevels = TRUE, test = FALSE))
 tbl |> 
   kable("html") |>
@@ -196,7 +201,7 @@ tbl |>
 ```{r}
 vars <- c("location_type", "isolate_sourcef")
 factorVars <- c("location_type", "isolate_sourcef")
-tableOne <- CreateTableOne(vars = vars, data = df_tb1_all, strata = "adi_tertile", factorVars = factorVars)
+tableOne <- CreateTableOne(vars = vars, data = df_tb1_all, strata = "adi_category", factorVars = factorVars)
 tbl <- (print(tableOne, nonnormal = TRUE, quote = FALSE, noSpaces = TRUE, printToggle = FALSE, showAllLevels = TRUE, test = FALSE))
 tbl |> 
   kable("html") |>
@@ -245,9 +250,9 @@ calculate_iptw <- function(data, formula, outcome_var, trim_quantiles = c(0.01, 
   return(data)
 }
 
-formula1 <- "adi_tertile ~ age_grp + s(culture_year) + s(distance_km) + gender + racef + ethnicityf + isolate_sourcef + location_type"
-formula2 <- "adi_tertile ~ age_grp + s(culture_year) + s(distance_km) + gender + racef + ethnicityf + isolate_sourcef"
-outcome_var1 <- "adi_tertile"
+formula1 <- "adi_category ~ age_grp + s(culture_year) + s(distance_km) + gender + racef + ethnicityf + isolate_sourcef + location_type"
+formula2 <- "adi_category ~ age_grp + s(culture_year) + s(distance_km) + gender + racef + ethnicityf + isolate_sourcef"
+outcome_var1 <- "adi_category"
 ```
 
 **Generate survival data for cumulative incidence curves**
@@ -272,7 +277,7 @@ generate_survival_data <- function(data, time_var, status_var, adi_var, group_va
   )
   # Create new data frame for predictions
   newdata_adi <- expand.grid(
-    adi_tertile = factor(c("Low", "High"), levels = levels(data[[adi_var]])),
+    adi_category = factor(c("Low", "High"), levels = levels(data[[adi_var]])),
     day1 = c(0, 1) # Include both day1 = 0 and day1 = 1
   )
   # Extract cumulative incidence data for each group
@@ -282,7 +287,7 @@ generate_survival_data <- function(data, time_var, status_var, adi_var, group_va
   df_susceptible_surv <- data.frame(
     time = rep(surv_fit_susceptible$time, times = nrow(newdata_adi)),
     surv = as.vector(1 - surv_fit_susceptible$surv), # Convert to cumulative incidence
-    strata = factor(rep(newdata_adi$adi_tertile, each = length(surv_fit_susceptible$time)), 
+    strata = factor(rep(newdata_adi$adi_category, each = length(surv_fit_susceptible$time)), 
                     levels = levels(data[[adi_var]])),
     day1 = factor(rep(newdata_adi$day1, each = length(surv_fit_susceptible$time))),
     isolate_type = "Susceptible"
@@ -290,7 +295,7 @@ generate_survival_data <- function(data, time_var, status_var, adi_var, group_va
   df_nonsusceptible_surv <- data.frame(
     time = rep(surv_fit_nonsusceptible$time, times = nrow(newdata_adi)),
     surv = as.vector(1 - surv_fit_nonsusceptible$surv), # Convert to cumulative incidence
-    strata = factor(rep(newdata_adi$adi_tertile, each = length(surv_fit_nonsusceptible$time)), 
+    strata = factor(rep(newdata_adi$adi_category, each = length(surv_fit_nonsusceptible$time)), 
                     levels = levels(data[[adi_var]])),
     day1 = factor(rep(newdata_adi$day1, each = length(surv_fit_nonsusceptible$time))),
     isolate_type = "Nonsusceptible"
@@ -390,7 +395,7 @@ df_mdr_all |>
   kable_styling()
 
 df_mdr_all |>
-  tabyl(mdr, statusf, adi_tertile) |>
+  tabyl(mdr, statusf, adi_category) |>
   adorn_totals(c("row", "col")) |>
   adorn_percentages() |>
   adorn_pct_formatting() |>
@@ -415,13 +420,13 @@ df_mdr_all <- calculate_iptw(
 
 ```{r}
 summary(df_mdr_all$iptw)
-ggplot(df_mdr_all, aes(x = ps, fill = adi_tertile)) +
+ggplot(df_mdr_all, aes(x = ps, fill = adi_category)) +
   geom_density(alpha = 0.5) +
   theme_minimal() +
   scale_fill_brewer(palette = "Set1")
 
 balance <- bal.tab(
-  adi_tertile ~ age_grp + rcs(culture_year, 5) + rcs(distance_km, 5) + gender + racef + ethnicityf + isolate_sourcef + location_type,
+  adi_category ~ age_grp + rcs(culture_year, 5) + rcs(distance_km, 5) + gender + racef + ethnicityf + isolate_sourcef + location_type,
   data = df_mdr_all,
   weights = df_mdr_all$iptw,
   un = TRUE
@@ -439,7 +444,7 @@ love.plot(
 **Cox models**
 
 ```{r}
-cox_mdr <- coxph(Surv(ftime, status) ~ adi_tertile,
+cox_mdr <- coxph(Surv(ftime, status) ~ adi_category,
                       weights = iptw,
                       cluster = pat_deid,
                  data = df_mdr_all |> filter(mdr))
@@ -456,7 +461,7 @@ estimates_nonsusc <- data.frame(
   conf.high = model_results$conf.int[2,4]
 )
 
-cox_nonmdr <- coxph(Surv(ftime, status) ~ adi_tertile,
+cox_nonmdr <- coxph(Surv(ftime, status) ~ adi_category,
                      weights = iptw,
                      cluster = pat_deid,
                  data = df_mdr_all |> filter(!mdr))
@@ -480,7 +485,7 @@ rm(cox_mdr, cox_nonmdr)
 **Linear models**
 
 ```{r}
-glm_mdr <- glm(status ~ adi_tertile,
+glm_mdr <- glm(status ~ adi_category,
                family = gaussian(link = "identity"),
                weights = iptw,
                data = df_mdr_all |> filter(mdr, isolate_number == 1))
@@ -499,7 +504,7 @@ estimates_nonsusc <- data.frame(
   ucl = ucl
 )
 
-glm_mdr <- glm(status ~ adi_tertile,
+glm_mdr <- glm(status ~ adi_category,
                family = gaussian(link = "identity"),
                weights = iptw,
                data = df_mdr_all |> filter(!mdr, isolate_number == 1))
@@ -528,12 +533,13 @@ df_surv <- generate_survival_data(
   data = df_mdr_all,
   time_var = "ftime",
   status_var = "status",
-  adi_var = "adi_tertile",
+  adi_var = "adi_category",
   group_var = "mdr",
   weights_var = "iptw",
   cluster_var = "pat_deid",
   interaction_var = 1
 )
+levels(df_surv$group) <- c("Low ADI, non-MDR", "High ADI, non-MDR", "Low ADI, MDR", "High ADI, MDR")
 ```
 
 ```{r}
@@ -566,7 +572,7 @@ chart_mdr
 
 ```{r}
 df_mdr_prop <- df_mdr_all |>
-  select(isolate_id, zip_code, mdr, adi_tertile) |>
+  select(isolate_id, zip_code, mdr, adi_category) |>
   group_by(zip_code, mdr) |>
   mutate(count = n()) |>
   ungroup() |>
@@ -579,7 +585,7 @@ df_mdr_prop <- df_mdr_all |>
   distinct()
 
 df_mdr_prop1 <- df_mdr_prop |>
-  group_by(adi_tertile) |>
+  group_by(adi_category) |>
   summarise(
     mean_prop = mean(prop),
     se = sd(prop) / sqrt(n()),
@@ -595,7 +601,7 @@ df_mdr_prop1 <- df_mdr_prop |>
 ```
 
 ```{r}
-chart_prev_mdr <- ggplot(df_mdr_prop, aes(x = adi_tertile, y = prop)) +
+chart_prev_mdr <- ggplot(df_mdr_prop, aes(x = adi_category, y = prop)) +
   geom_boxplot() +
   scale_y_continuous(limits = c(0, .6, .2)) +
   geom_jitter(width = 0.2, alpha = 0.6) +
@@ -634,7 +640,7 @@ df_amino |>
   kable_styling()
 
 df_amino |>
-  tabyl(resistant_to_class, statusf, adi_tertile) |>
+  tabyl(resistant_to_class, statusf, adi_category) |>
   adorn_totals(c("row", "col")) |>
   adorn_percentages() |>
   adorn_pct_formatting() |>
@@ -658,13 +664,13 @@ df_amino <- calculate_iptw(
 
 ```{r}
 summary(df_amino$iptw)
-ggplot(df_amino, aes(x = ps, fill = adi_tertile)) +
+ggplot(df_amino, aes(x = ps, fill = adi_category)) +
   geom_density(alpha = 0.5) +
   theme_minimal() +
   scale_fill_brewer(palette = "Set1")
 
 balance <- bal.tab(
-  adi_tertile ~ age_grp + rcs(culture_year, 5) + rcs(distance_km, 5) + gender + racef + ethnicityf + isolate_sourcef + location_type,
+  adi_category ~ age_grp + rcs(culture_year, 5) + rcs(distance_km, 5) + gender + racef + ethnicityf + isolate_sourcef + location_type,
   data = df_amino,
   weights = df_amino$iptw,
   un = TRUE
@@ -682,7 +688,7 @@ love.plot(
 **Cox models**
 
 ```{r}
-cox_amino_nonsusc <- coxph(Surv(ftime, status) ~ adi_tertile,
+cox_amino_nonsusc <- coxph(Surv(ftime, status) ~ adi_category,
                  weights = iptw,
                  cluster = pat_deid,
                  data = df_amino |> filter(resistant_to_class))
@@ -699,7 +705,7 @@ estimates_nonsusc <- data.frame(
   conf.high = model_results$conf.int[2,4]
 )
 
-cox_amino_susc <- coxph(Surv(ftime, status) ~ adi_tertile,
+cox_amino_susc <- coxph(Surv(ftime, status) ~ adi_category,
                  weights = iptw,
                  data = df_amino |> filter(!resistant_to_class))
 cox.zph(cox_amino_susc)
@@ -723,7 +729,7 @@ rm(cox_amino_nonsusc, cox_amino_susc)
 **Linear models**
 
 ```{r}
-glm_amino <- glm(status ~ adi_tertile,
+glm_amino <- glm(status ~ adi_category,
                family = gaussian(link = "identity"),
                weights = iptw,
                data = df_amino |> filter(resistant_to_class, isolate_number == 1))
@@ -740,7 +746,7 @@ estimates_nonsusc <- data.frame(
   ucl = ucl
 )
 
-glm_amino <- glm(status ~ adi_tertile,
+glm_amino <- glm(status ~ adi_category,
                family = gaussian(link = "identity"),
                weights = iptw,
                data = df_amino |> filter(!resistant_to_class, isolate_number == 1))
@@ -768,14 +774,12 @@ df_surv <- generate_survival_data(
   data = df_amino,
   time_var = "ftime",
   status_var = "status",
-  adi_var = "adi_tertile",
+  adi_var = "adi_category",
   group_var = "resistant_to_class",
   weights_var = "iptw",
   cluster_var = "pat_deid",
   interaction_var = 1
 )
-levels(df_surv$group) <- c("Low ADI, non-MDR", "High ADI, non-MDR", 
-                   "Low ADI, MDR", "High ADI, MDR")
 ```
 
 ```{r}
@@ -796,7 +800,7 @@ chart_amino
 
 ```{r}
 df_amino_prop <- df_amino |>
-  select(isolate_id, zip_code, resistant_to_class, adi_tertile) |>
+  select(isolate_id, zip_code, resistant_to_class, adi_category) |>
   group_by(zip_code, resistant_to_class) |>
   mutate(count = n()) |>
   ungroup() |>
@@ -809,7 +813,7 @@ df_amino_prop <- df_amino |>
   distinct()
 
 df_amino_prop1 <- df_amino_prop |>
-  group_by(adi_tertile) |>
+  group_by(adi_category) |>
   summarise(
     mean_prop = mean(prop),
     se = sd(prop) / sqrt(n()),
@@ -825,7 +829,7 @@ df_amino_prop1 <- df_amino_prop |>
 ```
 
 ```{r}
-chart_prev_amino <- ggplot(df_amino_prop, aes(x = adi_tertile, y = prop)) +
+chart_prev_amino <- ggplot(df_amino_prop, aes(x = adi_category, y = prop)) +
   geom_boxplot() +
   geom_jitter(width = 0.2, alpha = 0.6) +
   scale_y_continuous(limits = c(0, .6, .2)) +
@@ -863,7 +867,7 @@ df_carba |>
   kable_styling()
 
 df_carba |>
-  tabyl(resistant_to_class, statusf, adi_tertile) |>
+  tabyl(resistant_to_class, statusf, adi_category) |>
   adorn_totals(c("row", "col")) |>
   adorn_percentages() |>
   adorn_pct_formatting() |>
@@ -872,7 +876,7 @@ df_carba |>
   (\(x) walk2(names(x), x, ~ print(kable(.y, caption = paste("Mortality, by susceptibility and ADI level:", .x)))))()
 
 df_carba |>
-  tabyl(adi_tertile, day1, resistant_to_class) |>
+  tabyl(adi_category, day1, resistant_to_class) |>
   adorn_totals(c("row", "col")) |>
   adorn_percentages() |>
   adorn_pct_formatting() |>
@@ -905,13 +909,13 @@ df_carba <- calculate_iptw(
 
 ```{r}
 summary(df_carba$iptw)
-ggplot(df_carba, aes(x = ps, fill = adi_tertile)) +
+ggplot(df_carba, aes(x = ps, fill = adi_category)) +
   geom_density(alpha = 0.5) +
   theme_minimal() +
   scale_fill_brewer(palette = "Set1")
 
 balance <- bal.tab(
-  adi_tertile ~ age_grp + rcs(culture_year, 5) + rcs(distance_km, 5) + gender + racef + ethnicityf + isolate_sourcef + location_type,
+  adi_category ~ age_grp + rcs(culture_year, 5) + rcs(distance_km, 5) + gender + racef + ethnicityf + isolate_sourcef + location_type,
   data = df_carba,
   weights = df_carba$iptw,
   un = TRUE
@@ -929,7 +933,7 @@ love.plot(
 **Cox models**
 
 ```{r}
-cox_carb_nonsusc <- coxph(Surv(ftime, status) ~ adi_tertile,
+cox_carb_nonsusc <- coxph(Surv(ftime, status) ~ adi_category,
                  weights = iptw,
                  cluster = pat_deid,
                  data = df_carba |> filter(resistant_to_class))
@@ -946,7 +950,7 @@ estimates_nonsusc <- data.frame(
   conf.high = model_results$conf.int[2,4]
 )
 # Non-proportional hazards
-cox_carb_susc <- coxph(Surv(ftime, status) ~ adi_tertile * day1,
+cox_carb_susc <- coxph(Surv(ftime, status) ~ adi_category * day1,
                  weights = iptw,
                  data = df_carba |> filter(!resistant_to_class))
 cox.zph(cox_carb_susc)
@@ -970,7 +974,7 @@ rm(cox_carb_nonsusc, cox_carb_susc)
 **Linear models**
 
 ```{r}
-glm_carba <- glm(status ~ adi_tertile,
+glm_carba <- glm(status ~ adi_category,
                family = gaussian(link = "identity"),
                weights = iptw,
                data = df_carba |> filter(resistant_to_class, isolate_number == 1))
@@ -988,7 +992,7 @@ estimates_nonsusc <- data.frame(
   ucl = ucl
 )
 
-glm_carba <- glm(status ~ adi_tertile,
+glm_carba <- glm(status ~ adi_category,
                family = gaussian(link = "identity"),
                weights = iptw,
                data = df_carba |> filter(!resistant_to_class, isolate_number == 1))
@@ -1017,7 +1021,7 @@ df_surv <- generate_survival_data(
   data = df_carba,
   time_var = "ftime",
   status_var = "status",
-  adi_var = "adi_tertile",
+  adi_var = "adi_category",
   group_var = "resistant_to_class",
   weights_var = "iptw",
   cluster_var = "pat_deid",
@@ -1043,7 +1047,7 @@ chart_carba
 
 ```{r}
 df_carba_prop <- df_carba |>
-  select(isolate_id, zip_code, resistant_to_class, adi_tertile) |>
+  select(isolate_id, zip_code, resistant_to_class, adi_category) |>
   group_by(zip_code, resistant_to_class) |>
   mutate(count = n()) |>
   ungroup() |>
@@ -1056,7 +1060,7 @@ df_carba_prop <- df_carba |>
   distinct()
 
 df_carba_prop |>
-  group_by(adi_tertile) |>
+  group_by(adi_category) |>
   summarise(
     mean_prop = mean(prop),
     se = sd(prop) / sqrt(n()),
@@ -1072,7 +1076,7 @@ df_carba_prop |>
 ```
 
 ```{r}
-ggplot(df_carba_prop, aes(x = adi_tertile, y = prop)) +
+ggplot(df_carba_prop, aes(x = adi_category, y = prop)) +
   geom_boxplot() +
   geom_jitter(width = 0.2, alpha = 0.6) +
   labs(
@@ -1107,7 +1111,7 @@ df_ceph |>
   kable_styling()
 
 df_ceph |>
-  tabyl(resistant_to_class, statusf, adi_tertile) |>
+  tabyl(resistant_to_class, statusf, adi_category) |>
   adorn_totals(c("row", "col")) |>
   adorn_percentages() |>
   adorn_pct_formatting() |>
@@ -1131,13 +1135,13 @@ df_ceph <- calculate_iptw(
 
 ```{r}
 summary(df_ceph$iptw)
-ggplot(df_ceph, aes(x = ps, fill = adi_tertile)) +
+ggplot(df_ceph, aes(x = ps, fill = adi_category)) +
   geom_density(alpha = 0.5) +
   theme_minimal() +
   scale_fill_brewer(palette = "Set1")
 
 balance <- bal.tab(
-  adi_tertile ~ age_grp + rcs(culture_year, 5) + rcs(distance_km, 5) + gender + racef + ethnicityf + isolate_sourcef + location_type,
+  adi_category ~ age_grp + rcs(culture_year, 5) + rcs(distance_km, 5) + gender + racef + ethnicityf + isolate_sourcef + location_type,
   data = df_ceph,
   weights = df_ceph$iptw,
   un = TRUE
@@ -1155,7 +1159,7 @@ love.plot(
 **Cox models**
 
 ```{r}
-cox_ceph_nonsusc <- coxph(Surv(ftime, status) ~ adi_tertile,
+cox_ceph_nonsusc <- coxph(Surv(ftime, status) ~ adi_category,
                  weights = iptw,
                  cluster = pat_deid,
                  data = df_ceph |> filter(resistant_to_class))
@@ -1172,7 +1176,7 @@ estimates_nonsusc <- data.frame(
   conf.high = model_results$conf.int[2,4]
 )
 
-cox_ceph_susc <- coxph(Surv(ftime, status) ~ adi_tertile,
+cox_ceph_susc <- coxph(Surv(ftime, status) ~ adi_category,
                  weights = iptw,
                  data = df_ceph |> filter(!resistant_to_class))
 cox.zph(cox_ceph_susc)
@@ -1196,7 +1200,7 @@ rm(cox_ceph_nonsusc, cox_ceph_susc)
 **Linear models**
 
 ```{r}
-glm_ceph <- glm(status ~ adi_tertile,
+glm_ceph <- glm(status ~ adi_category,
                family = gaussian(link = "identity"),
                weights = iptw,
                data = df_ceph |> filter(resistant_to_class, isolate_number == 1))
@@ -1214,7 +1218,7 @@ estimates_nonsusc <- data.frame(
   ucl = ucl
 )
 
-glm_ceph <- glm(status ~ adi_tertile,
+glm_ceph <- glm(status ~ adi_category,
                family = gaussian(link = "identity"),
                weights = iptw,
                data = df_ceph |> filter(!resistant_to_class, isolate_number == 1))
@@ -1243,7 +1247,7 @@ df_surv <- generate_survival_data(
   data = df_ceph,
   time_var = "ftime",
   status_var = "status",
-  adi_var = "adi_tertile",
+  adi_var = "adi_category",
   group_var = "resistant_to_class",
   weights_var = "iptw",
   cluster_var = "pat_deid",
@@ -1269,7 +1273,7 @@ chart_ceph
 
 ```{r}
 df_ceph_prop <- df_ceph |>
-  select(isolate_id, zip_code, resistant_to_class, adi_tertile) |>
+  select(isolate_id, zip_code, resistant_to_class, adi_category) |>
   group_by(zip_code, resistant_to_class) |>
   mutate(count = n()) |>
   ungroup() |>
@@ -1282,7 +1286,7 @@ df_ceph_prop <- df_ceph |>
   distinct()
 
 df_ceph_prop1 <- df_ceph_prop |>
-  group_by(adi_tertile) |>
+  group_by(adi_category) |>
   summarise(
     mean_prop = mean(prop),
     se = sd(prop) / sqrt(n()),
@@ -1298,7 +1302,7 @@ df_ceph_prop1 <- df_ceph_prop |>
 ```
 
 ```{r}
-chart_prev_ceph <- ggplot(df_ceph_prop, aes(x = adi_tertile, y = prop)) +
+chart_prev_ceph <- ggplot(df_ceph_prop, aes(x = adi_category, y = prop)) +
   geom_boxplot() +
   geom_jitter(width = 0.2, alpha = 0.6) +
   scale_y_continuous(limits = c(0, .6, .2)) +
@@ -1335,7 +1339,7 @@ df_penbli |>
   kable_styling()
 
 df_penbli |>
-  tabyl(resistant_to_class, statusf, adi_tertile) |>
+  tabyl(resistant_to_class, statusf, adi_category) |>
   adorn_totals(c("row", "col")) |>
   adorn_percentages() |>
   adorn_pct_formatting() |>
@@ -1359,13 +1363,13 @@ df_penbli <- calculate_iptw(
 
 ```{r}
 summary(df_penbli$iptw)
-ggplot(df_penbli, aes(x = ps, fill = adi_tertile)) +
+ggplot(df_penbli, aes(x = ps, fill = adi_category)) +
   geom_density(alpha = 0.5) +
   theme_minimal() +
   scale_fill_brewer(palette = "Set1")
 
 balance <- bal.tab(
-  adi_tertile ~ age_grp + rcs(culture_year, 5) + rcs(distance_km, 5) + gender + racef + ethnicityf + isolate_sourcef + location_type,
+  adi_category ~ age_grp + rcs(culture_year, 5) + rcs(distance_km, 5) + gender + racef + ethnicityf + isolate_sourcef + location_type,
   data = df_penbli,
   weights = df_penbli$iptw,
   un = TRUE
@@ -1383,7 +1387,7 @@ love.plot(
 **Cox models**
 
 ```{r}
-cox_penbli_nonsusc <- coxph(Surv(ftime, status) ~ adi_tertile,
+cox_penbli_nonsusc <- coxph(Surv(ftime, status) ~ adi_category,
                  weights = iptw,
                  cluster = pat_deid,
                  data = df_penbli |> filter(resistant_to_class))
@@ -1400,7 +1404,7 @@ estimates_nonsusc <- data.frame(
   conf.high = model_results$conf.int[2,4]
 )
 
-cox_penbli_susc <- coxph(Surv(ftime, status) ~ adi_tertile,
+cox_penbli_susc <- coxph(Surv(ftime, status) ~ adi_category,
                  weights = iptw,
                  data = df_penbli |> filter(!resistant_to_class))
 cox.zph(cox_penbli_susc)
@@ -1424,7 +1428,7 @@ rm(cox_penbli_nonsusc, cox_penbli_susc)
 **Linear models**
 
 ```{r}
-glm_penbli <- glm(status ~ adi_tertile,
+glm_penbli <- glm(status ~ adi_category,
                family = gaussian(link = "identity"),
                weights = iptw,
                data = df_penbli |> filter(resistant_to_class, isolate_number == 1))
@@ -1442,7 +1446,7 @@ estimates_nonsusc <- data.frame(
   ucl = ucl
 )
 
-glm_penbli <- glm(status ~ adi_tertile,
+glm_penbli <- glm(status ~ adi_category,
                family = gaussian(link = "identity"),
                weights = iptw,
                data = df_penbli |> filter(!resistant_to_class, isolate_number == 1))
@@ -1471,7 +1475,7 @@ df_surv <- generate_survival_data(
   data = df_penbli,
   time_var = "ftime",
   status_var = "status",
-  adi_var = "adi_tertile",
+  adi_var = "adi_category",
   group_var = "resistant_to_class",
   weights_var = "iptw",
   cluster_var = "pat_deid",
@@ -1497,7 +1501,7 @@ chart_pen_bli
 
 ```{r}
 df_penbli_prop <- df_penbli |>
-  select(isolate_id, zip_code, resistant_to_class, adi_tertile) |>
+  select(isolate_id, zip_code, resistant_to_class, adi_category) |>
   group_by(zip_code, resistant_to_class) |>
   mutate(count = n()) |>
   ungroup() |>
@@ -1510,7 +1514,7 @@ df_penbli_prop <- df_penbli |>
   distinct()
 
 df_penbli_prop1 <- df_penbli_prop |>
-  group_by(adi_tertile) |>
+  group_by(adi_category) |>
   summarise(
     mean_prop = mean(prop),
     se = sd(prop) / sqrt(n()),
@@ -1526,7 +1530,7 @@ df_penbli_prop1 <- df_penbli_prop |>
 ```
 
 ```{r}
-chart_prev_penbli <- ggplot(df_penbli_prop, aes(x = adi_tertile, y = prop)) +
+chart_prev_penbli <- ggplot(df_penbli_prop, aes(x = adi_category, y = prop)) +
   geom_boxplot() +
   geom_jitter(width = 0.2, alpha = 0.6) +
   scale_y_continuous(limits = c(0, .6, .2)) +
@@ -1563,7 +1567,7 @@ df_quin |>
   kable_styling()
 
 df_quin |>
-  tabyl(resistant_to_class, statusf, adi_tertile) |>
+  tabyl(resistant_to_class, statusf, adi_category) |>
   adorn_totals(c("row", "col")) |>
   adorn_percentages() |>
   adorn_pct_formatting() |>
@@ -1587,13 +1591,13 @@ df_quin <- calculate_iptw(
 
 ```{r}
 summary(df_quin$iptw)
-ggplot(df_quin, aes(x = ps, fill = adi_tertile)) +
+ggplot(df_quin, aes(x = ps, fill = adi_category)) +
   geom_density(alpha = 0.5) +
   theme_minimal() +
   scale_fill_brewer(palette = "Set1")
 
 balance <- bal.tab(
-  adi_tertile ~ age_grp + rcs(culture_year, 5) + rcs(distance_km, 5) + gender + racef + ethnicityf + isolate_sourcef + location_type,
+  adi_category ~ age_grp + rcs(culture_year, 5) + rcs(distance_km, 5) + gender + racef + ethnicityf + isolate_sourcef + location_type,
   data = df_quin,
   weights = df_quin$iptw,
   un = TRUE
@@ -1611,7 +1615,7 @@ love.plot(
 **Cox models**
 
 ```{r}
-cox_quin_nonsusc <- coxph(Surv(ftime, status) ~ adi_tertile,
+cox_quin_nonsusc <- coxph(Surv(ftime, status) ~ adi_category,
                  weights = iptw,
                  cluster = pat_deid,
                  data = df_quin |> filter(resistant_to_class))
@@ -1628,7 +1632,7 @@ estimates_nonsusc <- data.frame(
   conf.high = model_results$conf.int[2,4]
 )
 
-cox_quin_susc <- coxph(Surv(ftime, status) ~ adi_tertile,
+cox_quin_susc <- coxph(Surv(ftime, status) ~ adi_category,
                  weights = iptw,
                  data = df_quin |> filter(!resistant_to_class))
 cox.zph(cox_quin_susc)
@@ -1654,7 +1658,7 @@ rm(cox_quin_nonsusc, cox_quin_susc)
 **Linear models**
 
 ```{r}
-glm_quin <- glm(status ~ adi_tertile,
+glm_quin <- glm(status ~ adi_category,
                family = gaussian(link = "identity"),
                weights = iptw,
                data = df_quin |> filter(resistant_to_class, isolate_number == 1))
@@ -1672,7 +1676,7 @@ estimates_nonsusc <- data.frame(
   ucl = ucl
 )
 
-glm_quin <- glm(status ~ adi_tertile,
+glm_quin <- glm(status ~ adi_category,
                family = gaussian(link = "identity"),
                weights = iptw,
                data = df_quin |> filter(!resistant_to_class, isolate_number == 1))
@@ -1701,7 +1705,7 @@ df_surv <- generate_survival_data(
   data = df_quin,
   time_var = "ftime",
   status_var = "status",
-  adi_var = "adi_tertile",
+  adi_var = "adi_category",
   group_var = "resistant_to_class",
   weights_var = "iptw",
   cluster_var = "pat_deid",
@@ -1727,7 +1731,7 @@ chart_quin
 
 ```{r}
 df_quin_prop <- df_quin |>
-  select(isolate_id, zip_code, resistant_to_class, adi_tertile) |>
+  select(isolate_id, zip_code, resistant_to_class, adi_category) |>
   group_by(zip_code, resistant_to_class) |>
   mutate(count = n()) |>
   ungroup() |>
@@ -1740,7 +1744,7 @@ df_quin_prop <- df_quin |>
   distinct()
 
 df_quin_prop1 <- df_quin_prop |>
-  group_by(adi_tertile) |>
+  group_by(adi_category) |>
   summarise(
     mean_prop = mean(prop),
     se = sd(prop) / sqrt(n()),
@@ -1756,7 +1760,7 @@ df_quin_prop1 <- df_quin_prop |>
 ```
 
 ```{r}
-chart_prev_quin <- ggplot(df_quin_prop, aes(x = adi_tertile, y = prop)) +
+chart_prev_quin <- ggplot(df_quin_prop, aes(x = adi_category, y = prop)) +
   geom_boxplot() +
   geom_jitter(width = 0.2, alpha = 0.6) +
   scale_y_continuous(limits = c(0, .6, .2)) +
@@ -1852,12 +1856,12 @@ calculate_rr <- function(dataset_list) {
     # Access the dataset dynamically
     data <- get(dataset_name)
     # Fit the modified Poisson model
-    model <- glm(resistant_to_class ~ adi_tertile, data = data, family = poisson(link = "log"))
+    model <- glm(resistant_to_class ~ adi_category, data = data, family = poisson(link = "log"))
     # Compute robust standard errors
     model_results <- coeftest(model, vcov = vcovHC(model, type = "HC0"))
-    # Extract the second coefficient (adi_tertileHigh vs adi_tertileLow)
+    # Extract the second coefficient (adi_categoryHigh vs adi_categoryLow)
     term_name <- rownames(model_results)[3]
-    if (!is.na(term_name) && grepl("adi_tertile", term_name)) {
+    if (!is.na(term_name) && grepl("adi_category", term_name)) {
       estimate <- round(exp(model_results[term_name, "Estimate"]), 2)
       stderr <- model_results[term_name, "Std. Error"]
       lower <- round(exp(model_results[term_name, "Estimate"] - 1.96 * stderr), 2)
@@ -1892,13 +1896,13 @@ calculate_rd <- function(dataset_list) {
 
   for (dataset_name in dataset_list) {
     data <- get(dataset_name)
-    model <- glm(resistant_to_class ~ adi_tertile, data = data, family = gaussian(link = "identity"))
+    model <- glm(resistant_to_class ~ adi_category, data = data, family = gaussian(link = "identity"))
     # Compute robust standard errors
     robust_se <- vcovHC(model, type = "HC0")
     model_results <- coeftest(model, vcov = robust_se)
-    # Extract the second coefficient (adi_tertileHigh vs adi_tertileLow)
+    # Extract the second coefficient (adi_categoryHigh vs adi_categoryLow)
     term_name <- rownames(model_results)[3]
-    if (!is.na(term_name) && grepl("adi_tertile", term_name)) {
+    if (!is.na(term_name) && grepl("adi_category", term_name)) {
       estimate <- round(model_results[term_name, "Estimate"], 4)
       stderr <- model_results[term_name, "Std. Error"]
       lower <- round(estimate - 1.96 * stderr, 4)
@@ -1944,7 +1948,7 @@ prev_by_adi <- df_mdr_prop1 |>
 ```
 
 ```{r}
-chart_prev <- ggplot(data = prev_by_adi, aes(x = grp, y = mean_prop, ymin = lower_ci, ymax = upper_ci, colour = adi_tertile)) + 
+chart_prev <- ggplot(data = prev_by_adi, aes(x = grp, y = mean_prop, ymin = lower_ci, ymax = upper_ci, colour = adi_category)) + 
   geom_point(position = position_dodge(width = 0.6)) +
   geom_errorbar(width = .3, position = position_dodge(width = 0.6)) +
   plt_theme +
@@ -1963,13 +1967,8 @@ chart_prev
 
 ```{r}
 prev_by_adi |>
-  select(grp, adi_tertile, mean_prop, lower_ci, upper_ci) |>
-  filter(adi_tertile != "Middle") |>
+  select(grp, adi_category, mean_prop, lower_ci, upper_ci) |>
+  filter(adi_category != "Middle") |>
   kable("html", caption = "Prevalence of non-susceptibility by ADI") |>
   kable_styling()
 ```
-
-
-
-
-
