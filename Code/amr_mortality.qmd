@@ -1,5 +1,5 @@
 ---
-title: "AMR Mortality and ADI analysis, v2"
+title: "AMR Mortality and ADI analysis"
 author: "Henderson, Heather"
 date: "`r format(Sys.time(), '%B %d, %Y')`"
 format: html
@@ -27,7 +27,7 @@ packages <- function(x) {
     }
   }
 }
-packages(c("haven", "readxl", "readr", "tidyverse" , "data.table" , "naniar", "rockchalk", "lubridate", "kableExtra", "DT", "formatR", "zoo", "janitor", "tableone", "broom", "furniture", "arsenal", "RColorBrewer", "survminer", "survival", "condSURV", "gtsummary", "ggsurvfit", "ggstance", "Hmisc", "rms", "sandwich", "lmtest", "ipw", "cobalt", "VGAM"))
+packages(c("haven", "readxl", "readr", "tidyverse" , "data.table" , "naniar", "rockchalk", "lubridate", "kableExtra", "DT", "formatR", "zoo", "janitor", "tableone", "broom", "furniture", "arsenal", "RColorBrewer", "survminer", "survival", "condSURV", "gtsummary", "ggsurvfit", "ggstance", "Hmisc", "rms", "sandwich", "lmtest", "ipw", "cobalt", "VGAM", "colorspace"))
 ```
 
 # Data
@@ -92,7 +92,7 @@ df <- data_all |>
                                   levels = c("urine", "blood", "resp", "other"))) |>
   select(pat_deid, isolate_id, age, gender, racef, ethnicityf, zip_code, parent_hospital, department_name, isolate_sourcef, organism_name, antibiotic_class, resistant_to_class, mdr, status, statusf, t0, tf, ftime, culture_year) |> 
   distinct() |>
-  left_join(adi_nc_zip |> mutate(zip_code = as.character(zip_code),
+  inner_join(adi_nc_zip |> mutate(zip_code = as.character(zip_code),
                                  adi_category = factor(adi_category, labels = c("Low", "Middle", "High"))), 
             relationship = "many-to-many")
 
@@ -379,6 +379,18 @@ df_mdr_all <- df2 |>
   group_by(pat_deid, isolate_number) |>
   slice(1) |> # Remove 8 duplicates, different locations for same isolate
   ungroup()
+
+df_mdr_all |>
+  filter(mdr) |>
+  # group_by(pat_deid) |>
+  # slice_max(order_by = t0, n = 1, with_ties = FALSE) |>
+  # ungroup() |>
+  tabyl(adi_category, statusf) |>
+  adorn_totals(c("row", "col")) |>
+  adorn_percentages() |>
+  adorn_pct_formatting() |>
+  adorn_ns() |>
+  adorn_title()
 ```
 
 #### Frequencies
@@ -543,32 +555,26 @@ levels(df_surv$group) <- c("Low ADI, non-MDR", "High ADI, non-MDR", "Low ADI, MD
 ```
 
 ```{r}
-chart_mdr <- ggplot(df_surv, aes(x = time, y = surv, color = group, linetype = group)) +
- scale_color_manual(
+chart_mdr <- ggplot(df_surv, aes(x = time, y = surv, color = group)) +
+  scale_color_manual(
     values = c(
-      "Low ADI, non-MDR" = "black",
-      "High ADI, non-MDR" = "grey",
-      "Low ADI, MDR" = "black",
-      "High ADI, MDR" = "grey"
-    )) +
-  scale_linetype_manual(
-    values = c(
-      "Low ADI, non-MDR" = "solid",
-      "High ADI, non-MDR" = "solid",
-      "Low ADI, MDR" = "dotted",
-      "High ADI, MDR" = "dotted"
+      "Low ADI, non-MDR" = "darkblue",
+      "High ADI, non-MDR" = "darkred",
+      "Low ADI, MDR" = "lightblue",
+      "High ADI, MDR" = "#FB9A99"
     )) +
   plt_theme +
   plt_guides +
-  geom_smooth(se = FALSE, method = "loess", span = 1) +
-  labs(x = "Days", y = "Cumulative Incidence") +
+  geom_smooth(se = FALSE, method = "loess", span = 1, size = 0.8) +
+  labs(x = "Days from culture growth", y = "Cumulative incidence of mortality") +
   scale_x_continuous(limits = c(0, 30), breaks = seq(0, 30, 5)) +
   scale_y_continuous(limits = c(0, 0.2), breaks = seq(0, 0.2, 0.05))
+
 chart_mdr
-# ggsave(filename = "plots/fig_mdr.tiff", plot = chart_mdr, device="tiff", dpi=500, width = 6, height = 5)
+# ggsave(filename = "plots/fig_mdr2.tiff", plot = chart_mdr, device="tiff", dpi=500, width = 6, height = 5)
 ```
 
-#### Prevalence by ZIP code
+#### Prevalence by ZIP code, ADI category
 
 ```{r}
 df_mdr_prop <- df_mdr_all |>
@@ -598,6 +604,23 @@ df_mdr_prop1 <- df_mdr_prop |>
     upper_ci = round(upper_ci, 3)
   ) |>
   select(-se)
+
+df_mdr_prop2 <- df_mdr_prop |>
+  summarise(
+    adi_category = "Overall",
+    mean_prop = mean(prop),
+    se = sd(prop) / sqrt(n()),
+    lower_ci = mean_prop - 1.96 * se,
+    upper_ci = mean_prop + 1.96 * se
+  ) |>
+  mutate(
+    mean_prop = round(mean_prop, 3),
+    lower_ci = round(lower_ci, 3),
+    upper_ci = round(upper_ci, 3)
+  ) |>
+  select(-se)
+
+df_mdr_prop1 <- bind_rows(df_mdr_prop2, df_mdr_prop1)
 ```
 
 ```{r}
@@ -789,14 +812,14 @@ chart_amino <- ggplot(df_surv, aes(x = time, y = surv, color = group, linetype =
   plt_theme +
   plt_guides +
   geom_smooth(se = FALSE, method = "loess", span = 1) +
-  labs(x = "Days", y = "Cumulative Incidence") +
+  labs(x = "Days from culture growth", y = "Cumulative incidence of mortality") +
   scale_x_continuous(limits = c(0, 30), breaks = seq(0, 30, 5)) +
   scale_y_continuous(limits = c(0, 0.2), breaks = seq(0, 0.2, 0.05))
 chart_amino
 # ggsave(filename = "plots/fig_amino.tiff", plot = chart_amino, device="tiff", dpi=500, width = 6, height = 5)
 ```
 
-#### Prevalence by ZIP code
+#### Prevalence by ZIP code ADI category
 
 ```{r}
 df_amino_prop <- df_amino |>
@@ -826,6 +849,23 @@ df_amino_prop1 <- df_amino_prop |>
     upper_ci = round(upper_ci, 3)
   ) |>
   select(-se)
+
+df_amino_prop2 <- df_amino_prop |>
+  summarise(
+    adi_category = "Overall",
+    mean_prop = mean(prop),
+    se = sd(prop) / sqrt(n()),
+    lower_ci = mean_prop - 1.96 * se,
+    upper_ci = mean_prop + 1.96 * se
+  ) |>
+  mutate(
+    mean_prop = round(mean_prop, 3),
+    lower_ci = round(lower_ci, 3),
+    upper_ci = round(upper_ci, 3)
+  ) |>
+  select(-se)
+
+df_amino_prop1 <- bind_rows(df_amino_prop2, df_amino_prop1)
 ```
 
 ```{r}
@@ -1043,7 +1083,7 @@ chart_carba
 # ggsave(filename = "plots/fig_carba.tiff", plot = chart_carba, device="tiff", dpi=500, width = 6, height = 5)
 ```
 
-#### Prevalence by ZIP code
+#### Prevalence by ZIP code, ADI category
 
 ```{r}
 df_carba_prop <- df_carba |>
@@ -1262,14 +1302,14 @@ chart_ceph <- ggplot(df_surv, aes(x = time, y = surv, color = group, linetype = 
   plt_theme +
   plt_guides +
   geom_smooth(se = FALSE, method = "loess", span = 1) +
-  labs(x = "Days", y = "Cumulative Incidence") +
+  labs(x = "Days from culture growth", y = "Cumulative incidence of mortality") +
   scale_x_continuous(limits = c(0, 30), breaks = seq(0, 30, 5)) +
   scale_y_continuous(limits = c(0, 0.2), breaks = seq(0, 0.2, 0.05))
 chart_ceph
 # ggsave(filename = "plots/fig_ceph.tiff", plot = chart_ceph, device="tiff", dpi=500, width = 6, height = 5)
 ```
 
-#### Prevalence by ZIP code
+#### Prevalence by ZIP code, ADI category
 
 ```{r}
 df_ceph_prop <- df_ceph |>
@@ -1299,6 +1339,23 @@ df_ceph_prop1 <- df_ceph_prop |>
     upper_ci = round(upper_ci, 3)
   ) |>
   select(-se)
+
+df_ceph_prop2 <- df_ceph_prop |>
+  summarise(
+    adi_category = "Overall",
+    mean_prop = mean(prop),
+    se = sd(prop) / sqrt(n()),
+    lower_ci = mean_prop - 1.96 * se,
+    upper_ci = mean_prop + 1.96 * se
+  ) |>
+  mutate(
+    mean_prop = round(mean_prop, 3),
+    lower_ci = round(lower_ci, 3),
+    upper_ci = round(upper_ci, 3)
+  ) |>
+  select(-se)
+
+df_ceph_prop1 <- bind_rows(df_ceph_prop2, df_ceph_prop1)
 ```
 
 ```{r}
@@ -1490,14 +1547,14 @@ chart_pen_bli <- ggplot(df_surv, aes(x = time, y = surv, color = group, linetype
   plt_theme +
   plt_guides +
   geom_smooth(se = FALSE, method = "loess", span = 1) +
-  labs(x = "Days", y = "Cumulative Incidence") +
+  labs(x = "Days from culture growth", y = "Cumulative incidence of mortality") +
   scale_x_continuous(limits = c(0, 30), breaks = seq(0, 30, 5)) +
   scale_y_continuous(limits = c(0, 0.2), breaks = seq(0, 0.2, 0.05))
 chart_pen_bli
 # ggsave(filename = "plots/fig_penbli.tiff", plot = chart_pen_bli, device="tiff", dpi=500, width = 6, height = 5)
 ```
 
-#### Prevalence by ZIP code
+#### Prevalence by ZIP code, ADI category
 
 ```{r}
 df_penbli_prop <- df_penbli |>
@@ -1527,6 +1584,23 @@ df_penbli_prop1 <- df_penbli_prop |>
     upper_ci = round(upper_ci, 3)
   ) |>
   select(-se)
+
+df_penbli_prop2 <- df_penbli_prop |>
+  summarise(
+    adi_category = "Overall",
+    mean_prop = mean(prop),
+    se = sd(prop) / sqrt(n()),
+    lower_ci = mean_prop - 1.96 * se,
+    upper_ci = mean_prop + 1.96 * se
+  ) |>
+  mutate(
+    mean_prop = round(mean_prop, 3),
+    lower_ci = round(lower_ci, 3),
+    upper_ci = round(upper_ci, 3)
+  ) |>
+  select(-se)
+
+df_penbli_prop1 <- bind_rows(df_penbli_prop2, df_penbli_prop1)
 ```
 
 ```{r}
@@ -1720,14 +1794,14 @@ chart_quin <- ggplot(df_surv, aes(x = time, y = surv, color = group, linetype = 
   plt_theme +
   plt_guides +
   geom_smooth(se = FALSE, method = "loess", span = 1) +
-  labs(x = "Days", y = "Cumulative Incidence") +
+  labs(x = "Days from culture growth", y = "Cumulative incidence of mortality") +
   scale_x_continuous(limits = c(0, 30), breaks = seq(0, 30, 5)) +
   scale_y_continuous(limits = c(0, 0.2), breaks = seq(0, 0.2, 0.05))
 chart_quin
 # ggsave(filename = "plots/fig_quin.tiff", plot = chart_quin, device="tiff", dpi=500, width = 6, height = 5)
 ```
 
-#### Prevalence by ZIP code
+#### Prevalence by ZIP code, ADI category
 
 ```{r}
 df_quin_prop <- df_quin |>
@@ -1757,6 +1831,23 @@ df_quin_prop1 <- df_quin_prop |>
     upper_ci = round(upper_ci, 3)
   ) |>
   select(-se)
+
+df_quin_prop2 <- df_quin_prop |>
+  summarise(
+    adi_category = "Overall",
+    mean_prop = mean(prop),
+    se = sd(prop) / sqrt(n()),
+    lower_ci = mean_prop - 1.96 * se,
+    upper_ci = mean_prop + 1.96 * se
+  ) |>
+  mutate(
+    mean_prop = round(mean_prop, 3),
+    lower_ci = round(lower_ci, 3),
+    upper_ci = round(upper_ci, 3)
+  ) |>
+  select(-se)
+
+df_quin_prop1 <- bind_rows(df_quin_prop2, df_quin_prop1)
 ```
 
 ```{r}
@@ -1838,7 +1929,7 @@ df_forest_plot_rd |>
   kable_styling()
 ```
 
-**Prevalence ratios and differences for non-susceptibility in high vs low ADI ZIP codes**
+# Prevalence of non-susceptibility in high vs low ADI ZIP codes
 
 ```{r message=FALSE, warning=FALSE}
 dataset_list <- c("df_amino", "df_ceph", "df_penbli", "df_quin")
@@ -1947,6 +2038,8 @@ prev_by_adi <- df_mdr_prop1 |>
          upper_ci = upper_ci * 100)
 ```
 
+## Prevalence plot
+
 ```{r}
 chart_prev <- ggplot(data = prev_by_adi, aes(x = grp, y = mean_prop, ymin = lower_ci, ymax = upper_ci, colour = adi_category)) + 
   geom_point(position = position_dodge(width = 0.6)) +
@@ -1965,10 +2058,11 @@ chart_prev
 # ggsave(filename = "plots/fig_prev_plot.tiff", plot = chart_prev, device="tiff", dpi=500, width = 8, height = 5)
 ```
 
+## Prevalence table
+
 ```{r}
 prev_by_adi |>
   select(grp, adi_category, mean_prop, lower_ci, upper_ci) |>
-  filter(adi_category != "Middle") |>
   kable("html", caption = "Prevalence of non-susceptibility by ADI") |>
   kable_styling()
 ```
