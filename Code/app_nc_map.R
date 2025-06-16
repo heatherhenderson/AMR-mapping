@@ -1,208 +1,238 @@
+# app.R
 library(shiny)
 library(shinydashboard)
 library(leaflet)
 library(DT)
 library(dplyr)
 library(ggplot2)
-library(scales)
-library(htmltools)
-library(janitor)
+library(plotly)
 library(sf)
 library(readxl)
-library(plotly)
+library(htmltools)
+library(rmapshaper)
+library(janitor)
+library(scales)
 
-# Datasets
-isolates <- readRDS("C:/Users/henderh/OneDrive - University of North Carolina at Chapel Hill/Projects/AMR/AMR_mapping_project/Maps/interactive_map/shiny_app/amr_zips_shp.rds")
-livestock <- readRDS("C:/Users/henderh/OneDrive - University of North Carolina at Chapel Hill/Projects/AMR/AMR_mapping_project/Maps/interactive_map/shiny_app/livestock.rds")
-hosp <- readRDS("C:/Users/henderh/OneDrive - University of North Carolina at Chapel Hill/Projects/AMR/AMR_mapping_project/Maps/interactive_map/shiny_app/nc_hospitals.rds")
-adi_nc_zip <- read_excel("C:/Users/henderh/OneDrive - University of North Carolina at Chapel Hill/Projects/AMR/AMR_mapping_project/NC data/adi_nc_zip.xlsx", col_types = c("text", "numeric", "numeric"))
+setwd("C:/Users/henderh/OneDrive - University of North Carolina at Chapel Hill/Projects/AMR/AMR_mapping_project/Maps/interactive_map/shiny_app/")
+
+# Load data files
+# Use ms_simplify to reduce complexity of spatial geometries for faster rendering
+df_isolates <- readRDS("amr_zips_shp.rds") %>% ms_simplify(keep = 0.05, keep_shapes = TRUE)
+df_livestock <- readRDS("livestock.rds")
+df_hosp <- readRDS("nc_hospitals.rds")
+adi_nc_zip <- read_excel("adi_nc_zip.xlsx", col_types = c("text", "numeric", "numeric"))
+
+# Merge datasets with ADI data
+df_isolates <- left_join(df_isolates, adi_nc_zip, by = c("zip_code" = "zip_code"))
+df_livestock <- left_join(df_livestock, adi_nc_zip, by = c("zip_code" = "zip_code"))
+df_hosp <- left_join(df_hosp, adi_nc_zip, by = c("zip_code" = "zip_code"))
+
+# PNG icon for hospital marker
 hosp_icon = makeIcon("C:/Users/henderh/OneDrive - University of North Carolina at Chapel Hill/Projects/AMR/AMR_mapping_project/Maps/interactive_map/shiny_app/hosp_icon.png", 
                      iconWidth = 20, iconHeight = 20)
-df_isolates <- isolates %>% left_join(adi_nc_zip, relationship = "many-to-many")
-df_livestock <- livestock %>% left_join(adi_nc_zip, relationship = "many-to-many")
-df_hosp <- hosp %>% left_join(adi_nc_zip, relationship = "many-to-many")
 
-# Define UI
+# Define the UI
 ui <- dashboardPage(
   dashboardHeader(title = "Interactive Map of AMR isolates and risk factors in North Carolina", titleWidth = 700),
-  dashboardSidebar(width = 300,
-                   sidebarMenu(
-                     menuItem("Map", tabName = "map"),
-                     menuItem("Data", tabName = "data")
-                   ),
-                   # Data layer selection
-                   checkboxGroupInput(
-                     "layers", "Choose data layers:",
-                     choices = c("AMR isolates" = "isolates", 
-                                 "Livestock operations" = "livestock",
-                                 "Hospitals" = "hospitals")
-                     ),
-                   # Conditional UI for organism selection
-                   conditionalPanel(
-                     condition = "input.layers.includes('isolates')",
-                     selectInput(
-                       inputId = "organism", 
-                       label = "Select resistant species", 
-                       choices = c("None selected" = "", 
-                                   unique(df_isolates$organism)),
-                       selected = "")
-                   ),
-                   # Conditional UI for livestock operation type selection
-                   conditionalPanel(
-                     condition = "input.layers.includes('livestock')",
-                     checkboxGroupInput(inputId = "regulated_operation", 
-                                        label = "Choose livestock operation type:", 
-                                        choiceNames = c("Swine", "Cattle", "Poultry"),
-                                        choiceValues = c("Swine", "Cattle", "Poultry"),
-                                        selected = c("Swine", "Cattle", "Poultry"))
-                   ),
-                   # Conditional UI for hospital type selection
-                   conditionalPanel(
-                     condition = "input.layers.includes('hospitals')",
-                     checkboxGroupInput(inputId = "hltype", 
-                                        label = "Choose hospital type:", 
-                                        choiceNames = c("Freestanding ED", "Acute care hospital", "Long-term acute care",
-                                                        "Psychiatric", "Rehab", "Specialty", "VA hospital"),
-                                        choiceValues = c("ED", "Hospital", "LTAC", "Psych", "Rehab", "S", "VA"),
-                                        selected = c("ED", "Hospital", "LTAC", "Psych", "Rehab", "S", "VA"))
-                   ),
-                   # Slider for ADI decile variable
-                   sliderInput(inputId = "decile_adi_range", 
-                               label = tags$span(style = "font-weight: normal;", 
-                                                 "Select ADI decile range to display"),
-                               min = min(df_isolates$median_adi_decile, na.rm = TRUE), 
-                               max = max(df_isolates$median_adi_decile, na.rm = TRUE),
-                               value = c(min(df_isolates$median_adi_decile, na.rm = TRUE), max(df_isolates$median_adi_decile, na.rm = TRUE))),
-                   actionButton("data_source", "About the data")
+  
+  # Set up the sidebar
+  dashboardSidebar(
+    width = 300,
+    sidebarMenu(
+      menuItem("Map", tabName = "map"),
+      menuItem("Data", tabName = "data")
+    ),
+    
+    # Data layer user selection
+    checkboxGroupInput(
+      "layers", "Choose data layers:",
+      choices = c("AMR isolates" = "isolates", 
+                  "Livestock" = "livestock", 
+                  "Hospitals" = "hospitals")
+    ),
+    
+    # Conditional panel for organism type
+    conditionalPanel(
+      condition = "input.layers.includes('isolates')",
+      selectInput(
+        inputId = "organism", 
+        label = "Select resistant species", 
+        choices = c("None selected" = "", unique(df_isolates$organism)),
+        selected = ""
+      )
+    ),
+    
+    # Conditional panel for livestock operation type
+    conditionalPanel(
+      condition = "input.layers.includes('livestock')",
+      checkboxGroupInput(
+        inputId = "regulated_operation", 
+        label = "Choose livestock operation type:", 
+        choiceNames = c("Cattle", "Poultry", "Swine"),
+        choiceValues = c("Cattle", "Poultry", "Swine"),
+        selected = ""
+      )
+    ),
+    
+    # Conditional panel for hospital type
+    conditionalPanel(
+      condition = "input.layers.includes('hospitals')",
+      checkboxGroupInput(
+        inputId = "hltype", 
+        label = "Choose hospital type:", 
+        choiceNames = c("Freestanding ED", "Acute care hospital", "Long-term acute care",
+                        "Psychiatric", "Rehab", "Specialty", "VA hospital"),
+        choiceValues = c("ED", "Hospital", "LTAC", "Psych", "Rehab", "S", "VA"),
+        selected = ""
+      )
+    ),
+    
+    # ADI decile slider
+    sliderInput(
+      inputId = "decile_adi_range", 
+      label = tags$span(style = "font-weight: normal;", "Select ADI decile range to display"),
+      min = min(df_isolates$median_adi_decile, na.rm = TRUE), 
+      max = max(df_isolates$median_adi_decile, na.rm = TRUE),
+      value = c(min(df_isolates$median_adi_decile, na.rm = TRUE),
+                max(df_isolates$median_adi_decile, na.rm = TRUE))
+    ),
+    
+    # Action button for data description
+    actionButton("data_source", "About the data")
   ),
   
+  # Set up the dashboard body
   dashboardBody(
     tabItems(
-      tabItem(tabName = "map",
-              fluidRow(
-                box(
-                  title = "NC Map", status = "primary", solidHeader = TRUE, width = 12,
-                  collapsible = FALSE, leafletOutput("nc_map", height = "calc(100vh - 150px)")
-                )
+      
+      # Map view
+      tabItem(
+        tabName = "map", 
+        fluidRow(
+          title = "NC Map", status = "primary", solidHeader = TRUE, width = 12,
+          collapsible = FALSE, leafletOutput("nc_map", height = "calc(100vh - 150px)")
+          )
+        ),
+      
+      # Data view
+      tabItem(
+        tabName = "data",
+        condition = "input.layers.includes('isolates')",
+        fluidRow(
+          box(
+            title = "AMR data table", status = "primary", solidHeader = TRUE, width = 6,
+            collapsible = TRUE, div(class = "resizable-table", DT::dataTableOutput("amr_table"))
+          ),
+          box(
+            title = "AMR histogram", status = "primary", solidHeader = TRUE, width = 6,
+            collapsible = TRUE, plotlyOutput("amr_histogram", height = "auto")
+          )
+        ),
+        
+        conditionalPanel(
+          condition = "input.layers.includes('livestock')",
+          fluidRow(
+            box(
+              title = "Livestock data table", status = "primary", solidHeader = TRUE, width = 6,
+              collapsible = TRUE, div(class = "resizable-table", DT::dataTableOutput("livestock_table"))
+            ),
+            box(
+              title = "Livestock density table", status = "primary", solidHeader = TRUE, width = 6,
+              collapsible = TRUE, div(class = "resizable-table", DT::dataTableOutput("livestock_density"))
               )
-      ),
-      tabItem(tabName = "data",
-              conditionalPanel(
-                condition = "input.layers.includes('isolates')",
-                fluidRow(
-                  box(
-                    title = "AMR data table", status = "primary", solidHeader = TRUE, width = 6,
-                    collapsible = TRUE, div(class = "resizable-table", DT::dataTableOutput("amr_table"))
-                  ),
-                  box(
-                    title = "AMR histogram", status = "primary", solidHeader = TRUE, width = 6,
-                    collapsible = TRUE, plotlyOutput("amr_histogram", height = "auto")
-                  )
-                )
-              ),
-              conditionalPanel(
-                condition = "input.layers.includes('livestock')",
-                fluidRow(
-                  box(
-                    title = "Livestock data table", status = "primary", solidHeader = TRUE, width = 6,
-                    collapsible = TRUE, div(class = "resizable-table", DT::dataTableOutput("livestock_table"))
-                  ),
-                  box(
-                    title = "Livestock density table", status = "primary", solidHeader = TRUE, width = 6,
-                    collapsible = TRUE, div(class = "resizable-table", DT::dataTableOutput("livestock_density"))
-                  )
-                )
-              ),
-              conditionalPanel(
-                condition = "input.layers.includes('hospitals')",
-                fluidRow(
-                  box(
-                    title = "Hospital data table", status = "primary", solidHeader = TRUE, width = 6,
-                    collapsible = TRUE, div(class = "resizable-table", DT::dataTableOutput("hospital_table"))
-                  )
-                )
-              )
+            )
+          ),
+        
+        conditionalPanel(
+          condition = "input.layers.includes('hospitals')",
+          fluidRow(
+            box(
+              title = "Hospital data table", status = "primary", solidHeader = TRUE, width = 6,
+              collapsible = TRUE, div(class = "resizable-table", dataTableOutput("hospital_table"))
+            )
+          )
+        )
       )
     )
   )
 )
 
-# Define server
+# Define the server
 server <- function(input, output, session) {
-  # Filter AMR data by user-selected organism
-  org_amr <- reactive({
-    req(input$organism)  # Ensure input$organism is available
-    df_isolates %>% filter(organism == input$organism,
-                           median_adi_decile >= input$decile_adi_range[1] & median_adi_decile <= input$decile_adi_range[2])
-  })
-  # Filter livestock data by user-selected operation type
-  operation_type <- reactive({
-    req(input$regulated_operation)  # Ensure input$regulated_operation is available
-    df_livestock %>% filter(regulated_operation %in% input$regulated_operation,
-                            median_adi_decile >= input$decile_adi_range[1] & median_adi_decile <= input$decile_adi_range[2])
-  })
-  # Bins for resistance percentages
+  # Bins for AMR percentages to display
   bins_amr <- c(0, 10, 20, 30, 40, 50, 100)
-  # Bins for operation head counts and scaled size for markers
-  bins_livestock <- reactive({
-    operation_type() %>%
-      mutate(count_bin = cut(allowable_count, 
-                             breaks = c(0, 500, 1000, 5000, 10000, 50000, 100000, 500000, 5000000), 
-                             include.lowest = TRUE, labels = FALSE),
-             count_label = cut(allowable_count, 
-                               breaks = c(0, 500, 1000, 5000, 10000, 50000, 100000, 500000, 5000000), 
-                               include.lowest = TRUE, 
-                               labels = c("<500", "500-1,000", "1,001-5,000", "5,001-10,000", 
-                                          "10,001-50,000", "50,001-100,000", "100,001-500,000",
-                                          ">500,000")),
-             scaled_size = scales::rescale(as.numeric(cut(allowable_count, 
-                                                          breaks = c(0, 500, 1000, 5000, 10000, 50000, 100000, 500000, 5000000))), 
-                                           to = c(4, 10)))
+  # Palette for AMR percentage bins
+  pal_amr <- colorBin("OrRd", bins = bins_amr, domain = df_isolates$pct)
+  # Palette for livestock operation type
+  pal_livestock <- colorFactor(c("green", "yellow", "lightblue"), domain = df_livestock$regulated_operation)
+  # Filter AMR data by user-selected organism
+  filtered_amr <- reactive({
+    req(input$organism)
+    df_isolates %>% filter(organism == input$organism,
+                           between(median_adi_decile, input$decile_adi_range[1], input$decile_adi_range[2]))
   })
-  # Filter hospital data by user-selected facility type
-  hosp_type <- reactive({
-    req(input$hltype)  # Ensure input$hltype is available
-    df_hosp %>% filter(hltype %in% input$hltype,
-                       median_adi_decile >= input$decile_adi_range[1] & median_adi_decile <= input$decile_adi_range[2])
-  })
-  # Color palettes for layers
-  pal_amr <- colorBin(palette = "OrRd", bins = bins_amr, domain = df_isolates$pct)
-  pal_livestock <- colorFactor(palette = c("green", "yellow", "lightblue"), domain = df_livestock$regulated_operation)
   
-  # Render leaflet map
+  # Filter livestock data by user-selected operation type
+  filtered_livestock <- reactive({
+    req(input$regulated_operation)
+    df_livestock %>% filter(regulated_operation %in% input$regulated_operation,
+                            between(median_adi_decile, input$decile_adi_range[1], input$decile_adi_range[2])) %>%
+      mutate(
+        count_bin = cut(allowable_count, 
+                        breaks = c(0, 500, 1000, 5000, 10000, 50000, 100000, 500000, 5000000), 
+                        include.lowest = TRUE, labels = FALSE),
+        count_label = cut(allowable_count, 
+                          breaks = c(0, 500, 1000, 5000, 10000, 50000, 100000, 500000, 5000000), 
+                          include.lowest = TRUE, 
+                          labels = c("<500", "500-1,000", "1,001-5,000", "5,001-10,000", 
+                                     "10,001-50,000", "50,001-100,000", "100,001-500,000",
+                                     ">500,000")),
+        scaled_size = scales::rescale(as.numeric(cut(allowable_count, 
+                                                     breaks = c(0, 500, 1000, 5000, 10000, 50000, 100000, 500000, 5000000))), 
+                                      to = c(4, 10))
+      )
+  })
+  
+  # Filter hospital data by user-selected facility type
+  filtered_hosp <- reactive({
+    req(input$hltype)
+    df_hosp %>% filter(hltype %in% input$hltype,
+                       between(median_adi_decile, input$decile_adi_range[1], input$decile_adi_range[2]))
+  })
+  
+  # Set up map
   output$nc_map <- renderLeaflet({
-    leaflet(options = leafletOptions(zoomSnap = 0.25, zoomDelta=0.25)) %>%
-      addProviderTiles(provider = "CartoDB.Positron") %>%
-      setView(lng = -79.7, lat = 35.3, zoom = 7.5)
+    leaflet() %>% addProviderTiles("CartoDB.Positron") %>% setView(-79.7, 35.3, 7.5)
   })
   
   observe({
     leafletProxy("nc_map") %>% clearShapes() %>% clearMarkers() %>% clearControls()
-    # Add AMR layer if selected and organism is chosen
-    if ("isolates" %in% input$layers && !is.null(input$organism)) {
+    
+    # Add AMR layer if selected and organism chosen
+    if ("isolates" %in% input$layers && input$organism != "") {
       leafletProxy("nc_map") %>%
-        addPolygons(data = org_amr(),
+        addPolygons(data = filtered_amr(),
+                    fillColor = ~pal_amr(pct),
+                    fillOpacity = 0.7, 
+                    weight = 0, 
+                    smoothFactor = 0.5,
                     label = sprintf("<strong> ZIP code %s</strong><br/>
                       <strong>%s County</strong><br/>
                       %g percent resistant<br/>
                       %g total isolates",
-                                    org_amr()$zip_code, org_amr()$county_prop, org_amr()$pct, org_amr()$total) %>%
-                      lapply(htmltools::HTML),
-                    stroke = FALSE,
-                    smoothFactor = 0.5,
-                    opacity = 1,
-                    fillOpacity = 0.7,
-                    fillColor = ~ pal_amr(pct)) %>%
+                                    filtered_amr()$zip_code, filtered_amr()$county_prop, filtered_amr()$pct, filtered_amr()$total) %>%
+                      lapply(htmltools::HTML)) %>%
         # Legend for AMR percentages
-        addLegend("bottomright",
-                  pal = pal_amr,
+        addLegend("bottomright", 
+                  pal = pal_amr, 
                   values = df_isolates$pct,
-                  title = "Percent of isolates resistant",
+                  title = "% Resistant", 
                   opacity = 0.7)
     }
-    # Add livestock layer if selected and operation type is chosen
-    if ("livestock" %in% input$layers && !is.null(input$regulated_operation)) {
-      livestock_data <- bins_livestock()
+    
+    # Add livestock layer if selected and operation type chosen
+    if ("livestock" %in% input$layers && length(input$regulated_operation) > 0) {
+      livestock_data <- filtered_livestock()
       
       leafletProxy("nc_map") %>%
         addCircleMarkers(data = livestock_data,
@@ -224,22 +254,87 @@ server <- function(input, output, session) {
         # Legend for livestock bin sizes
         addCustomLegend(livestock_data)
     }
-    # Add hospital layer if selected and type is chosen
-    if ("hospitals" %in% input$layers && !is.null(input$hltype)) {
-      hospital_data <- hosp_type()
-      if (nrow(hospital_data) > 0) {
-        leafletProxy("nc_map") %>%
-          addMarkers(data = hospital_data,
-                     lat = ~latitude,
-                     lng = ~longitude,
-                     icon = hosp_icon,
-                     popup = ~paste("Facility name:", facility, 
-                                                    "<br/>Number of beds:", hgenlic, 
-                                                    "<br>Facility type:", hltype,
-                                                    "<br/>County:", fcounty,
-                                                    "<br>City:", fcity))
-      } 
+    
+    # Add hospital layer if selected and type chosen
+    if ("hospitals" %in% input$layers && length(input$hltype) > 0) {
+      leafletProxy("nc_map") %>%
+        addMarkers(data = filtered_hosp(), 
+                   lng = ~longitude, 
+                   lat = ~latitude, 
+                   icon = hosp_icon,
+                   popup = ~paste(facility, "<br>Type:", 
+                                  hltype, "<br>Beds:",
+                                  hgenlic))
     }
+  })
+  
+  # Custom legend for size of livestock operations
+  addCustomLegend <- function(map, livestock_data) {
+    binned_data_sorted <- livestock_data %>%
+      arrange(as.numeric(as.factor(count_label))) %>%
+      distinct(count_label, scaled_size)
+
+    bins <- binned_data_sorted$count_label
+    sizes <- binned_data_sorted$scaled_size
+
+    legend_html <- paste0(
+      "<div style='background: white; padding: 10px; border-radius: 8px;'>",
+      "<strong>Number of animals</strong><br>",
+      paste(
+        mapply(function(size, bin) {
+          paste0(
+            "<div style='display: flex; align-items: center; margin-top: 5px;'>",
+            "<svg height='", size * 2, "' width='", size * 2, "'>",
+            "<circle cx='", size, "' cy='", size, "' r='", size, "' fill='grey' fill-opacity='0.3' /></svg>",
+            "<span style='margin-left: 8px;'>", bin, "</span></div>"
+          )
+        }, sizes, bins),
+        collapse = ""
+      ),
+      "</div>"
+    )
+
+    map %>%
+      addControl(html = legend_html, position = "bottomright")
+  }
+  
+  # Render AMR data table
+  output$amr_table <- renderDT({
+    filtered_amr() %>%
+      st_drop_geometry() %>%
+      select(zip_code, county_prop, total, pct) %>%
+      datatable(colnames = c("ZIP code", "Primary county", "Total number of isolates for ZIP code", "Percent resistant"))
+  })
+  
+  # Render AMR histogram
+  output$amr_histogram <- renderPlotly({
+    req(filtered_amr())
+    ggplotly(
+      ggplot(filtered_amr(), aes(pct)) +
+        geom_histogram(binwidth = 2, fill = "steelblue", color = "white") +
+        labs(title = "Percent Resistant by ZIP code", x = "Percent resistant", y = "Count") +
+        theme_minimal()
+    )
+  })
+  
+  # Render livestock data table
+  output$livestock_table <- renderDT({
+    filtered_livestock()  %>%
+      select(regulated_operation, allowable_count, zip_code) %>%
+      datatable(colnames = c("Operation type", "Allowed number of animals", "ZIP code"))
+  })
+  
+  # Render animal density table
+  output$livestock_density <- renderDT({
+    filtered_livestock() %>%
+      tabyl(allowable_count_binned) %>% 
+      adorn_pct_formatting() %>%
+      datatable(colnames = c("Allowed number of animals", "Number of operations", "Percent of total"))
+  })
+  
+  # Render hospital data table
+  output$hospital_table <- renderDT({
+    filtered_hosp() %>% st_drop_geometry() %>% select(facility, hgenlic, hltype, fcounty, fcity)
   })
   
   observeEvent(input$data_source, {
@@ -257,78 +352,20 @@ server <- function(input, output, session) {
       located within the ZIP code.")
     ))
   })
-  
-  addCustomLegend <- function(map, livestock_data) {
-    binned_data_sorted <- livestock_data %>% 
-      arrange(as.numeric(as.factor(count_label))) %>%
-      distinct(count_label, scaled_size)
-    
-    bins <- binned_data_sorted$count_label
-    sizes <- binned_data_sorted$scaled_size
-    
-    legend_html <- paste0(
-      "<div style='background: white; padding: 10px; border-radius: 8px;'>",
-      "<strong>Number of animals</strong><br>",
-      paste(
-        mapply(function(size, bin) {
-          paste0(
-            "<div style='display: flex; align-items: center; margin-top: 5px;'>",
-            "<svg height='", size * 2, "' width='", size * 2, "'>",
-            "<circle cx='", size, "' cy='", size, "' r='", size, "' fill='grey' fill-opacity='0.3' /></svg>",
-            "<span style='margin-left: 8px;'>", bin, "</span></div>"
-          )
-        }, sizes, bins),
-        collapse = ""
-      ),
-      "</div>"
-    )
-    
-    map %>%
-      addControl(html = legend_html, position = "bottomright")
-  }
-  
-  # Render AMR data table
-  output$amr_table <- DT::renderDataTable({
-    org_amr() %>%
-      sf::st_drop_geometry() %>%
-      select(zip_code, county_prop, total, pct) %>%
-      datatable(colnames = c("ZIP code", "Primary county", "Total number of isolates for ZIP code", "Percent resistant"))
-  })
-  # Render AMR histogram
-  output$amr_histogram <- renderPlotly({
-    amr_data <- org_amr()
-    
-    p <- ggplot(amr_data, aes(x = pct, text = paste("Count:", ..count.., "<br>Percent:", ..x..))) +
-      geom_histogram(binwidth = 2, fill = "steelblue", color = "white") +
-      labs(title = "Distribution of Resistant Isolates",
-           x = "Percent of isolates resistant",
-           y = "Number of ZIP codes") +
-      theme_minimal() +
-      scale_x_continuous(breaks = seq(0, 100, by = 10))
-    
-    ggplotly(p, tooltip = "text") %>%
-      layout(autosize = TRUE)
-  })
-  # Render livestock data table
-  output$livestock_table <- DT::renderDataTable({
-    operation_type() %>%
-      select(regulated_operation, allowable_count, zip_code) %>%
-      datatable(colnames = c("Operation type", "Allowed number of animals", "ZIP code"))
-  })
-  # Render animal density table
-  output$livestock_density <- DT::renderDataTable({
-    operation_type() %>%
-      janitor::tabyl(allowable_count_binned) %>% 
-      janitor::adorn_pct_formatting() %>%
-      datatable(colnames = c("Allowed number of animals", "Number of operations", "Percent of total"))
-  })
-  # Render hospital data table
-  output$hospital_table <- DT::renderDataTable({
-    hosp_type() %>%
-      st_drop_geometry() %>%
-      select(facility, hgenlic, hltype, fcounty, fcity) %>%
-      datatable(colnames = c("Facility name", "Number of beds", "Facility type", "County", "City"))
-  })
 }
 
-shinyApp(ui = ui, server = server)
+shinyApp(ui, server)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
