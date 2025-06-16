@@ -12,15 +12,15 @@ library(readxl)
 library(plotly)
 
 # Datasets
-isolates <- readRDS("J:/ID/AMR_map_van_Duin/species maps/interactive_map/shiny_app/amr_zips_shp.rds")
-livestock <- readRDS("J:/ID/AMR_map_van_Duin/species maps/interactive_map/shiny_app/livestock.rds")
-hosp <- readRDS("J:/ID/AMR_map_van_Duin/species maps/interactive_map/shiny_app/nc_hospitals.rds")
-zip_ses <- read_excel("J:/ID/AMR_map_van_Duin/zip_ses.xlsx", col_types = c("text", "numeric", "numeric"))
-hosp_icon = makeIcon("J:/ID/AMR_map_van_Duin/species maps/interactive_map/shiny_app/hosp_icon.png", 
+isolates <- readRDS("C:/Users/henderh/OneDrive - University of North Carolina at Chapel Hill/Projects/AMR/AMR_mapping_project/Maps/interactive_map/shiny_app/amr_zips_shp.rds")
+livestock <- readRDS("C:/Users/henderh/OneDrive - University of North Carolina at Chapel Hill/Projects/AMR/AMR_mapping_project/Maps/interactive_map/shiny_app/livestock.rds")
+hosp <- readRDS("C:/Users/henderh/OneDrive - University of North Carolina at Chapel Hill/Projects/AMR/AMR_mapping_project/Maps/interactive_map/shiny_app/nc_hospitals.rds")
+adi_nc_zip <- read_excel("C:/Users/henderh/OneDrive - University of North Carolina at Chapel Hill/Projects/AMR/AMR_mapping_project/NC data/adi_nc_zip.xlsx", col_types = c("text", "numeric", "numeric"))
+hosp_icon = makeIcon("C:/Users/henderh/OneDrive - University of North Carolina at Chapel Hill/Projects/AMR/AMR_mapping_project/Maps/interactive_map/shiny_app/hosp_icon.png", 
                      iconWidth = 20, iconHeight = 20)
-df_isolates <- isolates %>% left_join(zip_ses %>% mutate(pctile_ses = 1 - pctile) %>% select(zip_code, pctile_ses))
-df_livestock <- livestock %>% left_join(zip_ses %>% mutate(pctile_ses = 1 - pctile) %>% select(zip_code, pctile_ses))
-df_hosp <- hosp %>% left_join(zip_ses %>% mutate(pctile_ses = 1 - pctile) %>% select(zip_code, pctile_ses))
+df_isolates <- isolates %>% left_join(adi_nc_zip, relationship = "many-to-many")
+df_livestock <- livestock %>% left_join(adi_nc_zip, relationship = "many-to-many")
+df_hosp <- hosp %>% left_join(adi_nc_zip, relationship = "many-to-many")
 
 # Define UI
 ui <- dashboardPage(
@@ -31,17 +31,21 @@ ui <- dashboardPage(
                      menuItem("Data", tabName = "data")
                    ),
                    # Data layer selection
-                   checkboxGroupInput("layers", "Choose data layers:",
-                                      choices = c("AMR isolates" = "isolates", 
-                                                  "Livestock operations" = "livestock",
-                                                  "Hospitals" = "hospitals")),
+                   checkboxGroupInput(
+                     "layers", "Choose data layers:",
+                     choices = c("AMR isolates" = "isolates", 
+                                 "Livestock operations" = "livestock",
+                                 "Hospitals" = "hospitals")
+                     ),
                    # Conditional UI for organism selection
                    conditionalPanel(
                      condition = "input.layers.includes('isolates')",
-                     selectInput(inputId = "organism", 
-                                 label = "Select resistant species", 
-                                 choices = c("None selected" = "", unique(df_isolates$organism)),
-                                 selected = "")
+                     selectInput(
+                       inputId = "organism", 
+                       label = "Select resistant species", 
+                       choices = c("None selected" = "", 
+                                   unique(df_isolates$organism)),
+                       selected = "")
                    ),
                    # Conditional UI for livestock operation type selection
                    conditionalPanel(
@@ -62,13 +66,13 @@ ui <- dashboardPage(
                                         choiceValues = c("ED", "Hospital", "LTAC", "Psych", "Rehab", "S", "VA"),
                                         selected = c("ED", "Hospital", "LTAC", "Psych", "Rehab", "S", "VA"))
                    ),
-                   # Slider for pctile_ses variable
-                   sliderInput(inputId = "pctile_ses_range", 
+                   # Slider for ADI decile variable
+                   sliderInput(inputId = "decile_adi_range", 
                                label = tags$span(style = "font-weight: normal;", 
-                                                 "Select SES percentile range to display"),
-                               min = min(df_isolates$pctile_ses, na.rm = TRUE), 
-                               max = max(df_isolates$pctile_ses, na.rm = TRUE),
-                               value = c(min(df_isolates$pctile_ses, na.rm = TRUE), max(df_isolates$pctile_ses, na.rm = TRUE))),
+                                                 "Select ADI decile range to display"),
+                               min = min(df_isolates$median_adi_decile, na.rm = TRUE), 
+                               max = max(df_isolates$median_adi_decile, na.rm = TRUE),
+                               value = c(min(df_isolates$median_adi_decile, na.rm = TRUE), max(df_isolates$median_adi_decile, na.rm = TRUE))),
                    actionButton("data_source", "About the data")
   ),
   
@@ -129,13 +133,13 @@ server <- function(input, output, session) {
   org_amr <- reactive({
     req(input$organism)  # Ensure input$organism is available
     df_isolates %>% filter(organism == input$organism,
-                           pctile_ses >= input$pctile_ses_range[1] & pctile_ses <= input$pctile_ses_range[2])
+                           median_adi_decile >= input$decile_adi_range[1] & median_adi_decile <= input$decile_adi_range[2])
   })
   # Filter livestock data by user-selected operation type
   operation_type <- reactive({
     req(input$regulated_operation)  # Ensure input$regulated_operation is available
     df_livestock %>% filter(regulated_operation %in% input$regulated_operation,
-                            pctile_ses >= input$pctile_ses_range[1] & pctile_ses <= input$pctile_ses_range[2])
+                            median_adi_decile >= input$decile_adi_range[1] & median_adi_decile <= input$decile_adi_range[2])
   })
   # Bins for resistance percentages
   bins_amr <- c(0, 10, 20, 30, 40, 50, 100)
@@ -159,7 +163,7 @@ server <- function(input, output, session) {
   hosp_type <- reactive({
     req(input$hltype)  # Ensure input$hltype is available
     df_hosp %>% filter(hltype %in% input$hltype,
-                       pctile_ses >= input$pctile_ses_range[1] & pctile_ses <= input$pctile_ses_range[2])
+                       median_adi_decile >= input$decile_adi_range[1] & median_adi_decile <= input$decile_adi_range[2])
   })
   # Color palettes for layers
   pal_amr <- colorBin(palette = "OrRd", bins = bins_amr, domain = df_isolates$pct)
@@ -248,8 +252,9 @@ server <- function(input, output, session) {
       <br><strong>Livestock feeding operations</strong> data sourced from NC Department of Agriculture and Consumer Services: 
       https://www.deq.nc.gov/about/divisions/water-resources/permitting/animal-feeding-operations/animal-facility-map.<br>
       <br><strong>Hospital</strong> data sourced from NC OneMap: https://www.nconemap.gov/datasets/0b5a8fe009144b9bbeb7c4cee9ab7fa9/explore<br>
-      <br><strong>Socioeconomic status</strong> defined using the SES subscore of the Social Vulnerability Index, 
-      adapted for ZIP codes using CDC/ATSDR SVI Methodology: https://www.atsdr.cdc.gov/placeandhealth/svi/index.html#anchor_1714425989435.")
+      <br><strong>Area Deprivation Index</strong> data sourced from University of Wisconsin: https://www.neighborhoodatlas.medicine.wisc.edu/.
+      ADI decile defined for ZIP codes using the median value of ADI decile for the census block groups primarily 
+      located within the ZIP code.")
     ))
   })
   
