@@ -27,7 +27,7 @@ packages <- function(x) {
     }
   }
 }
-packages(c("haven", "readxl", "readr", "tidyverse" , "data.table" , "naniar", "rockchalk", "lubridate", "kableExtra", "DT", "formatR", "zoo", "janitor", "tableone", "broom", "furniture", "arsenal", "RColorBrewer", "survminer", "survival", "condSURV", "gtsummary", "ggsurvfit", "ggstance", "Hmisc", "rms", "sandwich", "lmtest", "ipw", "cobalt", "VGAM", "colorspace"))
+packages(c("haven", "readxl", "readr", "tidyverse" , "data.table" , "naniar", "rockchalk", "lubridate", "kableExtra", "DT", "formatR", "zoo", "janitor", "tableone", "broom", "furniture", "arsenal", "RColorBrewer", "survminer", "survival", "coxme", "condSURV", "gtsummary", "ggsurvfit", "ggstance", "Hmisc", "rms", "sandwich", "lmtest", "ipw", "cobalt", "VGAM", "colorspace"))
 ```
 
 # Data
@@ -38,7 +38,7 @@ setwd("C:/Users/henderh/OneDrive - University of North Carolina at Chapel Hill/P
 
 data_all <- readRDS("Z:/Van Duin_David_IRB23-2326/amr_mapping_rproj/data files/all_species_combined.rds")
 adi_nc_zip <- read_excel("adi_nc_zip.xlsx")
-distance <- read_rds("distance_0106.rds")
+distance <- read_rds("distance_0513.rds")
 unc_locations <- read_excel("unc_locations.xlsx")
 nonunc_locations <- read_excel("nonunc_locations.xlsx")
 # adi_nc_zip <- read.csv("C:/Users/henderh/OneDrive - University of North Carolina at Chapel Hill/Projects/AMR/AMR_mapping_project/NC data/NC_2022_ADI_Zip Code.csv")
@@ -100,6 +100,8 @@ df |>
   select(pat_deid, statusf) |>
   distinct() |>
   tabyl(statusf)
+
+# 83 patients missing zip
 ```
 
 **Numbers of patients and isolates, full dataset**
@@ -114,9 +116,7 @@ n_distinct(df$isolate_id)
 ```{r}
 df1 <- df |>
   filter(antibiotic_class %in% c("aminoglycoside", "carbapenem", "cephalosporin_3rd_gen", "cephalosporin_4th_gen", "penicillins_bli", "quinolone"),
-         gender %in% c("male", "female"),
-         isolate_sourcef %in% c("blood", "resp", "other"),
-         as.numeric(zip_code) %in% 27006:28909)  |>
+         isolate_sourcef %in% c("blood", "resp", "other"))  |>
   mutate(isolate_sourcef = factor(isolate_sourcef, levels = c("blood", "resp", "other")),
          antibiotic_class = ifelse(str_detect(antibiotic_class, "3|4"), "cephalosporin", antibiotic_class))
 # For calculating distances
@@ -124,6 +124,8 @@ df1 <- df |>
 #   select(zip_code, parent_hospital, department_name) |>
 #   distinct()
 # write_rds(dept_zip, "dept_zip.rds")
+n_distinct(df1$pat_deid)
+# Missing data for 14 patients
 ```
 
 **Add location type and distance, isolate counter**
@@ -133,6 +135,7 @@ df2 <- df1 |>
   left_join(locations) |>
   left_join(distance |> select(zip_code, department_name, distance_km), relationship = "many-to-many") |>
   filter(location_type %in% c("emergency", "icu", "inpatient", "outpatient"),
+         gender %in% c("male", "female"),
          !is.na(distance_km))
 
 isolate_counter <- df2 |>
@@ -175,13 +178,27 @@ df_tb1_1st <- df2 |>
   ungroup()
 # 1 obs per isolate
 df_tb1_all <- df2 |>
-  select(pat_deid, isolate_id, age, gender, racef, ethnicityf, adi_category, distance_km, parent_hospital, location_type, isolate_sourcef, statusf, mdr) |>
+  select(pat_deid, isolate_id, age, gender, racef, ethnicityf, adi_category, distance_km, parent_hospital, department_name, location_type, isolate_sourcef, statusf, mdr) |>
   distinct() |>
   add_count(parent_hospital) |>
   select(-n) |>
   group_by(isolate_id) |>
   slice(1) |>
   ungroup()
+```
+
+```{r}
+# Remove departments with few isolates
+depts <- df_tb1_all |>
+  mutate(department_name = ifelse(!location_type %in% c("outpatient"), parent_hospital, department_name)) |>
+  add_count(department_name) |>
+  mutate(department_name = as.factor(ifelse(n < 20, "other", department_name))) |>
+  select(isolate_id, department_name) |>
+  distinct()
+
+df2 <- df2 |>
+  select(-department_name) |>
+  left_join(depts)
 ```
 
 ## Patients
@@ -250,8 +267,8 @@ calculate_iptw <- function(data, formula, outcome_var, trim_quantiles = c(0.01, 
   return(data)
 }
 
-formula1 <- "adi_category ~ age_grp + s(culture_year) + s(distance_km) + gender + racef + ethnicityf + isolate_sourcef + location_type"
-formula2 <- "adi_category ~ age_grp + s(culture_year) + s(distance_km) + gender + racef + ethnicityf + isolate_sourcef"
+formula1 <- "adi_category ~ s(age) + s(culture_year) + s(distance_km) + gender + racef + ethnicityf + isolate_sourcef + location_type + department_name"
+
 outcome_var1 <- "adi_category"
 ```
 
@@ -364,7 +381,7 @@ plt_linetype <- scale_linetype_manual(
 ```{r}
 # 1st isolate only
 df_mdr_1st <- df2 |>
-  select(-c(isolate_id, parent_hospital, department_name, organism_name, antibiotic_class, resistant_to_class)) |>
+  select(-c(isolate_id, parent_hospital, organism_name, antibiotic_class, resistant_to_class)) |>
   distinct() |>
   drop_na() |>
   group_by(pat_deid) |>
@@ -373,7 +390,7 @@ df_mdr_1st <- df2 |>
   ungroup()
 # All isolates included
 df_mdr_all <- df2 |>
-  select(-c(parent_hospital, department_name, organism_name, antibiotic_class, resistant_to_class)) |>
+  select(-c(parent_hospital, organism_name, antibiotic_class, resistant_to_class)) |>
   distinct() |>
   drop_na() |>
   group_by(pat_deid, isolate_number) |>
@@ -494,48 +511,39 @@ estimates_hr <- rbind(estimates_nonsusc, estimates_susc)
 rm(cox_mdr, cox_nonmdr)
 ```
 
-**Linear models**
+**Mixed effects models**
 
 ```{r}
-glm_mdr <- glm(status ~ adi_category,
-               family = gaussian(link = "identity"),
-               weights = iptw,
-               data = df_mdr_all |> filter(mdr, isolate_number == 1))
-
-
-model_summary <- tidy(glm_mdr, conf.int = TRUE, conf.level = 0.95)
-risk_diff = round(model_summary[3,2] * 100,2)
-lcl = round(model_summary[3,6] * 100,2)
-ucl = round(model_summary[3,7] * 100,2)
-
-estimates_nonsusc <- data.frame(
-  drug_classs = "mdr",
-  status = "nonsusceptible",
-  rd = risk_diff,
-  lcl = lcl,
-  ucl = ucl
-)
-
-glm_mdr <- glm(status ~ adi_category,
-               family = gaussian(link = "identity"),
-               weights = iptw,
-               data = df_mdr_all |> filter(!mdr, isolate_number == 1))
-
-model_summary <- tidy(glm_mdr, conf.int = TRUE, conf.level = 0.95)
-risk_diff = round(model_summary[3,2] * 100,2)
-lcl = round(model_summary[3,6] * 100,2)
-ucl = round(model_summary[3,7] * 100,2)
-
-estimates_susc <- data.frame(
-  drug_classs = "mdr",
-  status = "susceptible",
-  rd = risk_diff,
-  lcl = lcl,
-  ucl = ucl
-)
-
-estimates_rd <- rbind(estimates_nonsusc, estimates_susc)
-rm(glm_mdr)
+# coxme_mdr <- coxme(Surv(ftime, status) ~ adi_category + (1 | department_name), weights = iptw, data = df_mdr_all |> filter(mdr))
+# 
+# model_results <- summary(coxme_mdr)
+# model_results
+# 
+# coxme_nonmdr <- coxme(Surv(ftime, status) ~ adi_category + (1 | department_name), weights = iptw, data = df_mdr_all |> filter(!mdr))
+# 
+# model_results <- summary(coxme_nonmdr)
+# model_results
+# 
+# summary_df_nonsusc <- tibble(
+#   drug = "mdr",
+#   category = "nonsuceptible",
+#   term = names(fixef(coxme_mdr)),
+#   estimate = fixef(coxme_mdr),
+#   std.error = sqrt(diag(vcov(coxme_mdr)))
+# )
+# 
+# summary_df_susc <- tibble(
+#   drug = "mdr",
+#   category = "suceptible",
+#   term = names(fixef(coxme_nonmdr)),
+#   estimate = fixef(coxme_nonmdr),
+#   std.error = sqrt(diag(vcov(coxme_nonmdr)))
+# )
+# 
+# summary_df <- rbind(summary_df_nonsusc, summary_df_susc)
+# summary_df_combined <- summary_df
+# 
+# rm(coxme_mdr, coxme_nonmdr)
 ```
 
 #### Cumulative incidence curves
@@ -555,13 +563,15 @@ levels(df_surv$group) <- c("Low ADI, non-MDR", "High ADI, non-MDR", "Low ADI, MD
 ```
 
 ```{r}
-chart_mdr <- ggplot(df_surv, aes(x = time, y = surv, color = group)) +
+df_surv <- df_surv |>
+  mutate(surv_adj = ifelse(group == "Low ADI, non-MDR", surv + 0.002, surv))
+chart_mdr <- ggplot(df_surv, aes(x = time, y = surv_adj, color = group)) +
   scale_color_manual(
     values = c(
       "Low ADI, non-MDR" = "darkblue",
-      "High ADI, non-MDR" = "darkred",
+      "High ADI, non-MDR" = "#FB9A99",
       "Low ADI, MDR" = "lightblue",
-      "High ADI, MDR" = "#FB9A99"
+      "High ADI, MDR" = "darkred"
     )) +
   plt_theme +
   plt_guides +
@@ -571,7 +581,7 @@ chart_mdr <- ggplot(df_surv, aes(x = time, y = surv, color = group)) +
   scale_y_continuous(limits = c(0, 0.2), breaks = seq(0, 0.2, 0.05))
 
 chart_mdr
-# ggsave(filename = "plots/fig_mdr2.tiff", plot = chart_mdr, device="tiff", dpi=500, width = 6, height = 5)
+# ggsave(filename = "plots/fig_mdr.tiff", plot = chart_mdr, device="tiff", dpi=500, width = 6, height = 5, bg="white")
 ```
 
 #### Prevalence by ZIP code, ADI category
@@ -626,13 +636,13 @@ df_mdr_prop1 <- bind_rows(df_mdr_prop2, df_mdr_prop1)
 ```{r}
 chart_prev_mdr <- ggplot(df_mdr_prop, aes(x = adi_category, y = prop)) +
   geom_boxplot() +
+  plt_theme +
   scale_y_continuous(limits = c(0, .6, .2)) +
   geom_jitter(width = 0.2, alpha = 0.6) +
   labs(
-    x = "ADI tertile",
+    x = "ADI category",
     y = "Proportion MDR"
-  ) +
-  theme_minimal()
+  )
 chart_prev_mdr
 # ggsave(filename = "plots/fig_prev_mdr.tiff", plot = chart_prev_mdr, device="tiff", dpi=500, width = 4, height = 5)
 ```
@@ -644,7 +654,7 @@ chart_prev_mdr
 ```{r}
 df_amino <- df2 |>
   filter(antibiotic_class == "aminoglycoside") |>
-  select(-c(parent_hospital, department_name, organism_name, t0, tf, antibiotic_class, mdr)) |>
+  select(-c(parent_hospital, organism_name, t0, tf, antibiotic_class, mdr)) |>
   distinct() |>
   drop_na()
 ```
@@ -730,6 +740,7 @@ estimates_nonsusc <- data.frame(
 
 cox_amino_susc <- coxph(Surv(ftime, status) ~ adi_category,
                  weights = iptw,
+                 cluster = pat_deid,
                  data = df_amino |> filter(!resistant_to_class))
 cox.zph(cox_amino_susc)
 
@@ -749,45 +760,37 @@ estimates_hr <- rbind(estimates_hr, estimates_nonsusc, estimates_susc)
 rm(cox_amino_nonsusc, cox_amino_susc)
 ```
 
-**Linear models**
+**Mixed effects models**
 
 ```{r}
-glm_amino <- glm(status ~ adi_category,
-               family = gaussian(link = "identity"),
-               weights = iptw,
-               data = df_amino |> filter(resistant_to_class, isolate_number == 1))
-model_summary <- tidy(glm_amino, conf.int = TRUE, conf.level = 0.95)
-risk_diff = round(model_summary[3,2] * 100,2)
-lcl = round(model_summary[3,6] * 100,2)
-ucl = round(model_summary[3,7] * 100,2)
-
-estimates_nonsusc <- data.frame(
-  drug_classs = "aminoglycoside",
-  status = "nonsusceptible",
-  rd = risk_diff,
-  lcl = lcl,
-  ucl = ucl
-)
-
-glm_amino <- glm(status ~ adi_category,
-               family = gaussian(link = "identity"),
-               weights = iptw,
-               data = df_amino |> filter(!resistant_to_class, isolate_number == 1))
-model_summary <- tidy(glm_amino, conf.int = TRUE, conf.level = 0.95)
-risk_diff = round(model_summary[3,2] * 100,2)
-lcl = round(model_summary[3,6] * 100,2)
-ucl = round(model_summary[3,7] * 100,2)
-
-estimates_susc <- data.frame(
-  drug_classs = "aminoglycoside",
-  status = "susceptible",
-  rd = risk_diff,
-  lcl = lcl,
-  ucl = ucl
-)
-
-estimates_rd <- rbind(estimates_rd, estimates_nonsusc, estimates_susc)
-rm(glm_amino)
+# coxme_amino_nonsusc <- coxme(Surv(ftime, status) ~ adi_category + (1 | department_name), weights = iptw, data = df_amino |> filter(resistant_to_class))
+# 
+# summary(coxme_amino_nonsusc)
+# 
+# coxme_amino_susc <- coxme(Surv(ftime, status) ~ adi_category + (1 | department_name), weights = iptw, data = df_amino |> filter(!resistant_to_class))
+# 
+# summary(coxme_amino_susc)
+# 
+# summary_df_nonsusc <- tibble(
+#   drug = "aminoglycoside",
+#   category = "nonsusceptible",
+#   term = names(fixef(coxme_amino_nonsusc)),
+#   estimate = fixef(coxme_amino_nonsusc),
+#   std.error = sqrt(diag(vcov(coxme_amino_nonsusc)))
+# )
+# 
+# summary_df_susc <- tibble(
+#   drug = "aminoglycoside",
+#   category = "susceptible",
+#   term = names(fixef(coxme_amino_susc)),
+#   estimate = fixef(coxme_amino_susc),
+#   std.error = sqrt(diag(vcov(coxme_amino_susc)))
+# )
+# 
+# summary_df <- rbind(summary_df_nonsusc, summary_df_susc)
+# summary_df_combined <- rbind(summary_df_combined, summary_df)
+# 
+# rm(coxme_amino_nonsusc, coxme_amino_susc)
 ```
 
 #### Cumulative incidence curves
@@ -871,259 +874,15 @@ df_amino_prop1 <- bind_rows(df_amino_prop2, df_amino_prop1)
 ```{r}
 chart_prev_amino <- ggplot(df_amino_prop, aes(x = adi_category, y = prop)) +
   geom_boxplot() +
-  geom_jitter(width = 0.2, alpha = 0.6) +
+  plt_theme +
   scale_y_continuous(limits = c(0, .6, .2)) +
+  geom_jitter(width = 0.2, alpha = 0.6) +
   labs(
-    x = "ADI tertile",
+    x = "ADI category",
     y = "Proportion non-susceptible"
-  ) +
-  theme_minimal()
+  )
 chart_prev_amino
 # ggsave(filename = "plots/fig_prev_amino.tiff", plot = chart_prev_amino, device="tiff", dpi=500, width = 4, height = 5)
-```
-
-### Carbapenems
-
-```{r}
-df_carba <- df2 |>
-  filter(antibiotic_class == "carbapenem") |>
-  select(-c(parent_hospital, department_name, organism_name, t0, tf, antibiotic_class, mdr)) |>
-  distinct() |>
-  drop_na() |>
-  mutate(day1 = ifelse(ftime <= 1, TRUE, FALSE))
-```
-
-#### Frequencies
-
-```{r results='asis'}
-df_carba |>
-  tabyl(resistant_to_class, statusf) |>
-  adorn_totals(c("row", "col")) |>
-  adorn_percentages() |>
-  adorn_pct_formatting() |>
-  adorn_ns() |>
-  adorn_title() |> 
-  kable("html", caption = "Mortality by susceptibility") |>
-  kable_styling()
-
-df_carba |>
-  tabyl(resistant_to_class, statusf, adi_category) |>
-  adorn_totals(c("row", "col")) |>
-  adorn_percentages() |>
-  adorn_pct_formatting() |>
-  adorn_ns() |>
-  adorn_title() |>
-  (\(x) walk2(names(x), x, ~ print(kable(.y, caption = paste("Mortality, by susceptibility and ADI level:", .x)))))()
-
-df_carba |>
-  tabyl(adi_category, day1, resistant_to_class) |>
-  adorn_totals(c("row", "col")) |>
-  adorn_percentages() |>
-  adorn_pct_formatting() |>
-  adorn_ns() |>
-  adorn_title() |>
-  (\(x) walk2(names(x), x, ~ print(kable(.y, caption = paste("Death by Day 1, by ADI level and non-susceptibility:", .x)))))()
-
-df_carba |>
-  tabyl(location_type, resistant_to_class, statusf) |>
-  adorn_totals(c("row", "col")) |>
-  adorn_percentages() |>
-  adorn_pct_formatting() |>
-  adorn_ns() |>
-  adorn_title()
-# No non-susceptible isolates from ED among patients who died
-```
-
-#### Model results
-
-```{r}
-# Fit propensity score model for resistance
-df_carba <- calculate_iptw(
-  data = df_carba,
-  formula = formula2,
-  outcome_var = outcome_var1
-)
-```
-
-**Evaluate propensity scores**
-
-```{r}
-summary(df_carba$iptw)
-ggplot(df_carba, aes(x = ps, fill = adi_category)) +
-  geom_density(alpha = 0.5) +
-  theme_minimal() +
-  scale_fill_brewer(palette = "Set1")
-
-balance <- bal.tab(
-  adi_category ~ age_grp + rcs(culture_year, 5) + rcs(distance_km, 5) + gender + racef + ethnicityf + isolate_sourcef + location_type,
-  data = df_carba,
-  weights = df_carba$iptw,
-  un = TRUE
-)
-
-love.plot(
-  balance,
-  thresholds = c(m = 0.1),
-  colors = c("gray50", "darkblue"),
-  var.order = "unadjusted",
-  stars = "std"
-)
-```
-
-**Cox models**
-
-```{r}
-cox_carb_nonsusc <- coxph(Surv(ftime, status) ~ adi_category,
-                 weights = iptw,
-                 cluster = pat_deid,
-                 data = df_carba |> filter(resistant_to_class))
-cox.zph(cox_carb_nonsusc)
-
-model_results <- summary(cox_carb_nonsusc)
-model_results
-
-estimates_nonsusc <- data.frame(
-  drug_classs = "carbapenem",
-  status = "nonsusceptible",
-  estimate = model_results$coefficients[2,2],
-  conf.low = model_results$conf.int[2,3],
-  conf.high = model_results$conf.int[2,4]
-)
-# Non-proportional hazards
-cox_carb_susc <- coxph(Surv(ftime, status) ~ adi_category * day1,
-                 weights = iptw,
-                 data = df_carba |> filter(!resistant_to_class))
-cox.zph(cox_carb_susc)
-
-model_results <- summary(cox_carb_susc)
-model_results
-
-estimates_susc <- data.frame(
-  drug_classs = "carbapenem",
-  status = "susceptible",
-  estimate = model_results$coefficients[2,2],
-  conf.low = model_results$conf.int[2,3],
-  conf.high = model_results$conf.int[2,4]
-)
-
-estimates_hr <- rbind(estimates_hr, estimates_nonsusc, estimates_susc)
-
-rm(cox_carb_nonsusc, cox_carb_susc)
-```
-
-**Linear models**
-
-```{r}
-glm_carba <- glm(status ~ adi_category,
-               family = gaussian(link = "identity"),
-               weights = iptw,
-               data = df_carba |> filter(resistant_to_class, isolate_number == 1))
-
-model_summary <- tidy(glm_carba, conf.int = TRUE, conf.level = 0.95)
-risk_diff = round(model_summary[3,2] * 100,2)
-lcl = round(model_summary[3,6] * 100,2)
-ucl = round(model_summary[3,7] * 100,2)
-
-estimates_nonsusc <- data.frame(
-  drug_classs = "carbapenem",
-  status = "nonsusceptible",
-  rd = risk_diff,
-  lcl = lcl,
-  ucl = ucl
-)
-
-glm_carba <- glm(status ~ adi_category,
-               family = gaussian(link = "identity"),
-               weights = iptw,
-               data = df_carba |> filter(!resistant_to_class, isolate_number == 1))
-
-model_summary <- tidy(glm_carba, conf.int = TRUE, conf.level = 0.95)
-risk_diff = round(model_summary[3,2] * 100,2)
-lcl = round(model_summary[3,6] * 100,2)
-ucl = round(model_summary[3,7] * 100,2)
-
-estimates_susc <- data.frame(
-  drug_classs = "carbapenem",
-  status = "susceptible",
-  rd = risk_diff,
-  lcl = lcl,
-  ucl = ucl
-)
-
-estimates_rd <- rbind(estimates_rd, estimates_nonsusc, estimates_susc)
-rm(glm_carba)
-```
-
-#### Cumulative incidence curves
-
-```{r}
-df_surv <- generate_survival_data(
-  data = df_carba,
-  time_var = "ftime",
-  status_var = "status",
-  adi_var = "adi_category",
-  group_var = "resistant_to_class",
-  weights_var = "iptw",
-  cluster_var = "pat_deid",
-  interaction_var = 1
-)
-```
-
-```{r}
-chart_carba <- ggplot(df_surv, aes(x = time, y = surv, color = group, linetype = group)) +
-  plt_color +
-  plt_linetype +
-  plt_theme +
-  plt_guides +
-  geom_smooth(se = FALSE, method = "loess", span = 1) +
-  labs(x = "Days", y = "Cumulative Incidence") +
-  scale_x_continuous(limits = c(0, 30), breaks = seq(0, 30, 5)) +
-  scale_y_continuous(limits = c(0, 0.2), breaks = seq(0, 0.2, 0.05))
-chart_carba
-# ggsave(filename = "plots/fig_carba.tiff", plot = chart_carba, device="tiff", dpi=500, width = 6, height = 5)
-```
-
-#### Prevalence by ZIP code, ADI category
-
-```{r}
-df_carba_prop <- df_carba |>
-  select(isolate_id, zip_code, resistant_to_class, adi_category) |>
-  group_by(zip_code, resistant_to_class) |>
-  mutate(count = n()) |>
-  ungroup() |>
-  group_by(zip_code) |>
-  mutate(total = n(),
-         prop = round(count / total,3)) |>
-  ungroup() |>
-  filter(resistant_to_class, total >= 10) |>
-  select(-c(isolate_id, resistant_to_class)) |>
-  distinct()
-
-df_carba_prop |>
-  group_by(adi_category) |>
-  summarise(
-    mean_prop = mean(prop),
-    se = sd(prop) / sqrt(n()),
-    lower_ci = mean_prop - 1.96 * se,
-    upper_ci = mean_prop + 1.96 * se
-  ) |>
-  mutate(
-    mean_prop = round(mean_prop, 3),
-    lower_ci = round(lower_ci, 3),
-    upper_ci = round(upper_ci, 3)
-  ) |>
-  select(-se)
-```
-
-```{r}
-ggplot(df_carba_prop, aes(x = adi_category, y = prop)) +
-  geom_boxplot() +
-  geom_jitter(width = 0.2, alpha = 0.6) +
-  labs(
-    x = "ADI tertile",
-    y = "Proportion non-susceptible"
-  ) +
-  theme_minimal()
 ```
 
 ### 3rd/4th generation cephalosporins
@@ -1131,7 +890,7 @@ ggplot(df_carba_prop, aes(x = adi_category, y = prop)) +
 ```{r}
 df_ceph <- df2 |>
   filter(antibiotic_class == "cephalosporin") |>
-  select(-c(parent_hospital, department_name, organism_name, t0, tf, antibiotic_class, mdr)) |>
+  select(-c(parent_hospital, organism_name, t0, tf, antibiotic_class, mdr)) |>
   distinct() |>
   drop_na()
 n_distinct(df_ceph$pat_deid)
@@ -1218,6 +977,7 @@ estimates_nonsusc <- data.frame(
 
 cox_ceph_susc <- coxph(Surv(ftime, status) ~ adi_category,
                  weights = iptw,
+                 cluster = pat_deid,
                  data = df_ceph |> filter(!resistant_to_class))
 cox.zph(cox_ceph_susc)
 
@@ -1237,47 +997,37 @@ estimates_hr <- rbind(estimates_hr, estimates_nonsusc, estimates_susc)
 rm(cox_ceph_nonsusc, cox_ceph_susc)
 ```
 
-**Linear models**
+**Mixed effects models**
 
 ```{r}
-glm_ceph <- glm(status ~ adi_category,
-               family = gaussian(link = "identity"),
-               weights = iptw,
-               data = df_ceph |> filter(resistant_to_class, isolate_number == 1))
-
-model_summary <- tidy(glm_ceph, conf.int = TRUE, conf.level = 0.95)
-risk_diff = round(model_summary[3,2] * 100,2)
-lcl = round(model_summary[3,6] * 100,2)
-ucl = round(model_summary[3,7] * 100,2)
-
-estimates_nonsusc <- data.frame(
-  drug_classs = "cephalosporin",
-  status = "nonsusceptible",
-  rd = risk_diff,
-  lcl = lcl,
-  ucl = ucl
-)
-
-glm_ceph <- glm(status ~ adi_category,
-               family = gaussian(link = "identity"),
-               weights = iptw,
-               data = df_ceph |> filter(!resistant_to_class, isolate_number == 1))
-
-model_summary <- tidy(glm_ceph, conf.int = TRUE, conf.level = 0.95)
-risk_diff = round(model_summary[3,2] * 100,2)
-lcl = round(model_summary[3,6] * 100,2)
-ucl = round(model_summary[3,7] * 100,2)
-
-estimates_susc <- data.frame(
-  drug_classs = "cephalosporin",
-  status = "susceptible",
-  rd = risk_diff,
-  lcl = lcl,
-  ucl = ucl
-)
-
-estimates_rd <- rbind(estimates_rd, estimates_nonsusc, estimates_susc)
-rm(glm_ceph)
+# coxme_ceph_nonsusc <- coxme(Surv(ftime, status) ~ adi_category + (1 | department_name), weights = iptw, df_ceph |> filter(resistant_to_class))
+# 
+# summary(coxme_ceph_nonsusc)
+# 
+# coxme_ceph_susc <- coxme(Surv(ftime, status) ~ adi_category + (1 | department_name), weights = iptw, df_ceph |> filter(!resistant_to_class))
+# 
+# summary(coxme_ceph_susc)
+# 
+# summary_df_nonsusc <- tibble(
+#   drug = "cephalosporin",
+#   category = "nonsusceptible",
+#   term = names(fixef(coxme_ceph_nonsusc)),
+#   estimate = fixef(coxme_ceph_nonsusc),
+#   std.error = sqrt(diag(vcov(coxme_ceph_nonsusc)))
+# )
+# 
+# summary_df_susc <- tibble(
+#   drug = "cephalosporin",
+#   category = "susceptible",
+#   term = names(fixef(coxme_ceph_susc)),
+#   estimate = fixef(coxme_ceph_susc),
+#   std.error = sqrt(diag(vcov(coxme_ceph_susc)))
+# )
+# 
+# summary_df <- rbind(summary_df_nonsusc, summary_df_susc)
+# summary_df_combined <- rbind(summary_df_combined, summary_df)
+# 
+# rm(coxme_ceph_nonsusc, coxme_ceph_susc)
 ```
 
 #### Cumulative incidence curves
@@ -1361,13 +1111,13 @@ df_ceph_prop1 <- bind_rows(df_ceph_prop2, df_ceph_prop1)
 ```{r}
 chart_prev_ceph <- ggplot(df_ceph_prop, aes(x = adi_category, y = prop)) +
   geom_boxplot() +
-  geom_jitter(width = 0.2, alpha = 0.6) +
+  plt_theme +
   scale_y_continuous(limits = c(0, .6, .2)) +
+  geom_jitter(width = 0.2, alpha = 0.6) +
   labs(
-    x = "ADI tertile",
+    x = "ADI category",
     y = "Proportion non-susceptible"
-  ) +
-  theme_minimal()
+  )
 chart_prev_ceph
 # ggsave(filename = "plots/fig_prev_ceph.tiff", plot = chart_prev_ceph, device="tiff", dpi=500, width = 4, height = 5)
 ```
@@ -1377,7 +1127,7 @@ chart_prev_ceph
 ```{r}
 df_penbli <- df2 |>
   filter(antibiotic_class == "penicillins_bli") |>
-  select(-c(parent_hospital, department_name, organism_name, t0, tf, antibiotic_class, mdr)) |>
+  select(-c(parent_hospital, organism_name, t0, tf, antibiotic_class, mdr)) |>
   distinct() |>
   drop_na()
 ```
@@ -1463,6 +1213,7 @@ estimates_nonsusc <- data.frame(
 
 cox_penbli_susc <- coxph(Surv(ftime, status) ~ adi_category,
                  weights = iptw,
+                 cluster = pat_deid,
                  data = df_penbli |> filter(!resistant_to_class))
 cox.zph(cox_penbli_susc)
 
@@ -1482,47 +1233,37 @@ estimates_hr <- rbind(estimates_hr, estimates_nonsusc, estimates_susc)
 rm(cox_penbli_nonsusc, cox_penbli_susc)
 ```
 
-**Linear models**
+**Mixed effects models**
 
 ```{r}
-glm_penbli <- glm(status ~ adi_category,
-               family = gaussian(link = "identity"),
-               weights = iptw,
-               data = df_penbli |> filter(resistant_to_class, isolate_number == 1))
-
-model_summary <- tidy(glm_penbli, conf.int = TRUE, conf.level = 0.95)
-risk_diff = round(model_summary[3,2] * 100,2)
-lcl = round(model_summary[3,6] * 100,2)
-ucl = round(model_summary[3,7] * 100,2)
-
-estimates_nonsusc <- data.frame(
-  drug_classs = "penicillin_bli",
-  status = "nonsusceptible",
-  rd = risk_diff,
-  lcl = lcl,
-  ucl = ucl
-)
-
-glm_penbli <- glm(status ~ adi_category,
-               family = gaussian(link = "identity"),
-               weights = iptw,
-               data = df_penbli |> filter(!resistant_to_class, isolate_number == 1))
-
-model_summary <- tidy(glm_penbli, conf.int = TRUE, conf.level = 0.95)
-risk_diff = round(model_summary[3,2] * 100,2)
-lcl = round(model_summary[3,6] * 100,2)
-ucl = round(model_summary[3,7] * 100,2)
-
-estimates_susc <- data.frame(
-  drug_classs = "penicillin_bli",
-  status = "susceptible",
-  rd = risk_diff,
-  lcl = lcl,
-  ucl = ucl
-)
-
-estimates_rd <- rbind(estimates_rd, estimates_nonsusc, estimates_susc)
-rm(glm_penbli)
+# coxme_penbli_nonsusc <- coxme(Surv(ftime, status) ~ adi_category + (1 | department_name), weights = iptw, df_penbli |> filter(resistant_to_class))
+# 
+# summary(coxme_penbli_nonsusc)
+# 
+# coxme_penbli_susc <- coxme(Surv(ftime, status) ~ adi_category + (1 | department_name), weights = iptw, df_penbli |> filter(!resistant_to_class))
+# 
+# summary(coxme_penbli_susc)
+# 
+# summary_df_nonsusc <- tibble(
+#   drug = "penicillin_bli",
+#   category = "nonsusceptible",
+#   term = names(fixef(coxme_penbli_nonsusc)),
+#   estimate = fixef(coxme_penbli_nonsusc),
+#   std.error = sqrt(diag(vcov(coxme_penbli_nonsusc)))
+# )
+# 
+# summary_df_susc <- tibble(
+#   drug = "penicillin_bli",
+#   category = "susceptible",
+#   term = names(fixef(coxme_penbli_susc)),
+#   estimate = fixef(coxme_penbli_susc),
+#   std.error = sqrt(diag(vcov(coxme_penbli_susc)))
+# )
+# 
+# summary_df <- rbind(summary_df_nonsusc, summary_df_susc)
+# summary_df_combined <- rbind(summary_df_combined, summary_df)
+# 
+# rm(coxme_penbli_nonsusc, coxme_penbli_susc)
 ```
 
 #### Cumulative incidence curves
@@ -1606,13 +1347,13 @@ df_penbli_prop1 <- bind_rows(df_penbli_prop2, df_penbli_prop1)
 ```{r}
 chart_prev_penbli <- ggplot(df_penbli_prop, aes(x = adi_category, y = prop)) +
   geom_boxplot() +
-  geom_jitter(width = 0.2, alpha = 0.6) +
+  plt_theme +
   scale_y_continuous(limits = c(0, .6, .2)) +
+  geom_jitter(width = 0.2, alpha = 0.6) +
   labs(
-    x = "ADI tertile",
+    x = "ADI category",
     y = "Proportion non-susceptible"
-  ) +
-  theme_minimal()
+  )
 chart_prev_penbli
 # ggsave(filename = "plots/fig_prev_penbli.tiff", plot = chart_prev_penbli, device="tiff", dpi=500, width = 4, height = 5)
 ```
@@ -1622,7 +1363,7 @@ chart_prev_penbli
 ```{r}
 df_quin <- df2 |>
   filter(antibiotic_class == "quinolone") |>
-  select(-c(parent_hospital, department_name, organism_name, t0, tf, antibiotic_class, mdr)) |>
+  select(-c(parent_hospital, organism_name, t0, tf, antibiotic_class, mdr)) |>
   distinct() |>
   drop_na()
 ```
@@ -1708,6 +1449,7 @@ estimates_nonsusc <- data.frame(
 
 cox_quin_susc <- coxph(Surv(ftime, status) ~ adi_category,
                  weights = iptw,
+                 cluster = pat_deid,
                  data = df_quin |> filter(!resistant_to_class))
 cox.zph(cox_quin_susc)
 
@@ -1729,47 +1471,37 @@ estimates_hr <- estimates_hr |>
 rm(cox_quin_nonsusc, cox_quin_susc)
 ```
 
-**Linear models**
+**Mixed effects models**
 
 ```{r}
-glm_quin <- glm(status ~ adi_category,
-               family = gaussian(link = "identity"),
-               weights = iptw,
-               data = df_quin |> filter(resistant_to_class, isolate_number == 1))
-
-model_summary <- tidy(glm_quin, conf.int = TRUE, conf.level = 0.95)
-risk_diff = round(model_summary[3,2] * 100,2)
-lcl = round(model_summary[3,6] * 100,2)
-ucl = round(model_summary[3,7] * 100,2)
-
-estimates_nonsusc <- data.frame(
-  drug_classs = "quinolone",
-  status = "nonsusceptible",
-  rd = risk_diff,
-  lcl = lcl,
-  ucl = ucl
-)
-
-glm_quin <- glm(status ~ adi_category,
-               family = gaussian(link = "identity"),
-               weights = iptw,
-               data = df_quin |> filter(!resistant_to_class, isolate_number == 1))
-
-model_summary <- tidy(glm_quin, conf.int = TRUE, conf.level = 0.95)
-risk_diff = round(model_summary[3,2] * 100,2)
-lcl = round(model_summary[3,6] * 100,2)
-ucl = round(model_summary[3,7] * 100,2)
-
-estimates_susc <- data.frame(
-  drug_classs = "quinolone",
-  status = "susceptible",
-  rd = risk_diff,
-  lcl = lcl,
-  ucl = ucl
-)
-
-estimates_rd <- rbind(estimates_rd, estimates_nonsusc, estimates_susc)
-rm(glm_quin)
+# coxme_quin_nonsusc <- coxme(Surv(ftime, status) ~ adi_category + (1 | department_name), weights = iptw, df_quin |> filter(resistant_to_class))
+# 
+# summary(coxme_quin_nonsusc)
+# 
+# coxme_quin_susc <- coxme(Surv(ftime, status) ~ adi_category + (1 | department_name), weights = iptw, df_quin |> filter(!resistant_to_class))
+# 
+# summary(coxme_quin_susc)
+# 
+# summary_df_nonsusc <- tibble(
+#   drug = "quinolone",
+#   category = "nonsusceptible",
+#   term = names(fixef(coxme_quin_nonsusc)),
+#   estimate = fixef(coxme_quin_nonsusc),
+#   std.error = sqrt(diag(vcov(coxme_quin_nonsusc)))
+# )
+# 
+# summary_df_susc <- tibble(
+#   drug = "quinolone",
+#   category = "susceptible",
+#   term = names(fixef(coxme_quin_susc)),
+#   estimate = fixef(coxme_quin_susc),
+#   std.error = sqrt(diag(vcov(coxme_quin_susc)))
+# )
+# 
+# summary_df <- rbind(summary_df_nonsusc, summary_df_susc)
+# summary_df_combined <- rbind(summary_df_combined, summary_df)
+# 
+# rm(coxme_quin_nonsusc, coxme_quin_susc)
 ```
 
 #### Cumulative incidence curves
@@ -1853,13 +1585,13 @@ df_quin_prop1 <- bind_rows(df_quin_prop2, df_quin_prop1)
 ```{r}
 chart_prev_quin <- ggplot(df_quin_prop, aes(x = adi_category, y = prop)) +
   geom_boxplot() +
-  geom_jitter(width = 0.2, alpha = 0.6) +
+  plt_theme +
   scale_y_continuous(limits = c(0, .6, .2)) +
+  geom_jitter(width = 0.2, alpha = 0.6) +
   labs(
-    x = "ADI tertile",
+    x = "ADI category",
     y = "Proportion non-susceptible"
-  ) +
-  theme_minimal()
+  )
 chart_prev_quin
 # ggsave(filename = "plots/fig_prev_quin.tiff", plot = chart_prev_quin, device="tiff", dpi=500, width = 4, height = 5)
 ```
@@ -1887,9 +1619,9 @@ chart_forest <- ggplot(df_forest_plot_hr, aes(y = resistance, x = estimate, xmin
   plt_theme +
   scale_color_manual(values = c("Susceptible" = "black", "Non-susceptible" = "grey")) +
   scale_y_discrete(limits = rev) +
-  scale_x_log10(limits = c(0.5, 2.5))
+  scale_x_log10(limits = c(0.5, 3.5))
 chart_forest
-# ggsave(filename = "plots/fig_forest_plot.tiff", plot = chart_forest, device="tiff", dpi=500, width = 7, height = 5)
+# ggsave(filename = "plots/fig_forest_plot_revised.tiff", plot = chart_forest, device="tiff", dpi=500, width = 7, height = 5)
 ```
 
 ```{r}
@@ -1898,171 +1630,397 @@ df_forest_plot_hr |>
   kable_styling()
 ```
 
-## Risk differences
-
-**30-day mortality, high ADI vs low ADI (per 100 isolates)**
+**Mixed effect model summary**
 
 ```{r}
-df_forest_plot_rd <- estimates_rd |>
-  mutate(resistance = factor(drug_classs, levels = c("aminoglycoside", "cephalosporin", "penicillin_bli", "quinolone", "mdr"), labels = c("Aminoglycoside", "Cephalosporin, 3rd/4th generation", "Penicillin + beta-lactamase inhibitor", "Quinolone", "Multidrug resistance")),
-         status = factor(status, levels = c("susceptible", "nonsusceptible"), labels = c("Susceptible", "Non-susceptible"))) |>
-  select(resistance, status, estimate, conf.low, conf.high) |>
-  filter(resistance != "carbapenem")
-
-chart_forest <- ggplot(df_forest_plot_rd, aes(y = resistance, x = estimate, xmin = conf.low, xmax = conf.high, color = status)) +
-  ggstance::geom_pointrangeh(position = position_dodge(width = 0.6)) +
-  geom_vline(xintercept = 0, linetype = "dashed") +
-  labs(
-    x = "Risk difference",
-    y = ""
-  ) +
-  plt_theme +
-  scale_color_manual(values = c("Susceptible" = "black", "Non-susceptible" = "grey")) +
-  scale_y_discrete(limits = rev)
-chart_forest
-# ggsave(filename = "plots/fig_forest_plot.tiff", plot = chart_forest, device="tiff", dpi=500, width = 7, height = 5)
+# coxme_summary <- summary_df_combined |>
+#   filter(term == "adi_categoryHigh") |>
+#   mutate(estimate_exp = round(exp(estimate),2),
+#          lower_ci = round(exp(estimate - 1.96 * std.error),2),
+#          upper_ci = round(exp(estimate + 1.96 * std.error),2)) |>
+#   select(-c(term, estimate, std.error))
 ```
 
-```{r}
-df_forest_plot_rd |> 
-  kable("html", caption = "Adjusted Risk difference for high vs low ADI, per 100 isolates") |>
-  kable_styling()
-```
+<!-- # Prevalence of non-susceptibility in high vs low ADI ZIP codes -->
 
-# Prevalence of non-susceptibility in high vs low ADI ZIP codes
+<!-- ```{r message=FALSE, warning=FALSE} -->
 
-```{r message=FALSE, warning=FALSE}
-dataset_list <- c("df_amino", "df_ceph", "df_penbli", "df_quin")
-# Custom function to run list of antibiotic classes and use sandwich variance estimator
-calculate_rr <- function(dataset_list) {
-  results <- data.frame(
-    dataset = character(),
-    estimate = numeric(),
-    lower = numeric(),
-    upper = numeric(),
-    stringsAsFactors = FALSE
-  )
+<!-- dataset_list <- c("df_amino", "df_ceph", "df_penbli", "df_quin") -->
 
-  for (dataset_name in dataset_list) {
-    # Access the dataset dynamically
-    data <- get(dataset_name)
-    # Fit the modified Poisson model
-    model <- glm(resistant_to_class ~ adi_category, data = data, family = poisson(link = "log"))
-    # Compute robust standard errors
-    model_results <- coeftest(model, vcov = vcovHC(model, type = "HC0"))
-    # Extract the second coefficient (adi_categoryHigh vs adi_categoryLow)
-    term_name <- rownames(model_results)[3]
-    if (!is.na(term_name) && grepl("adi_category", term_name)) {
-      estimate <- round(exp(model_results[term_name, "Estimate"]), 2)
-      stderr <- model_results[term_name, "Std. Error"]
-      lower <- round(exp(model_results[term_name, "Estimate"] - 1.96 * stderr), 2)
-      upper <- round(exp(model_results[term_name, "Estimate"] + 1.96 * stderr), 2)
+<!-- # Custom function to run list of antibiotic classes and use sandwich variance estimator -->
 
-      # Append results to the output data frame
-      results <- rbind(results, data.frame(
-        dataset = dataset_name,
-        estimate = estimate,
-        lower = lower,
-        upper = upper
-      ))
-    }
-  }
+<!-- calculate_rr <- function(dataset_list) { -->
 
-  return(results)
-}
-rr_results <- calculate_rr(dataset_list)
-print(rr_results)
-```
+<!--   results <- data.frame( -->
 
-```{r message=FALSE, warning=FALSE}
-calculate_rd <- function(dataset_list) {
-  # Create an empty data frame to store results
-  results <- data.frame(
-    dataset = character(),
-    estimate = numeric(),
-    lower = numeric(),
-    upper = numeric(),
-    stringsAsFactors = FALSE
-  )
+<!--     dataset = character(), -->
 
-  for (dataset_name in dataset_list) {
-    data <- get(dataset_name)
-    model <- glm(resistant_to_class ~ adi_category, data = data, family = gaussian(link = "identity"))
-    # Compute robust standard errors
-    robust_se <- vcovHC(model, type = "HC0")
-    model_results <- coeftest(model, vcov = robust_se)
-    # Extract the second coefficient (adi_categoryHigh vs adi_categoryLow)
-    term_name <- rownames(model_results)[3]
-    if (!is.na(term_name) && grepl("adi_category", term_name)) {
-      estimate <- round(model_results[term_name, "Estimate"], 4)
-      stderr <- model_results[term_name, "Std. Error"]
-      lower <- round(estimate - 1.96 * stderr, 4)
-      upper <- round(estimate + 1.96 * stderr, 4)
+<!--     estimate = numeric(), -->
 
-      # Append results to the output data frame
-      results <- rbind(results, data.frame(
-        dataset = dataset_name,
-        estimate = estimate * 100,
-        lower = lower * 100,
-        upper = upper * 100
-      ))
-    }
-  }
+<!--     lower = numeric(), -->
 
-  return(results)
-}
+<!--     upper = numeric(), -->
 
-rd_results <- calculate_rd(dataset_list)
-```
+<!--     stringsAsFactors = FALSE -->
 
-```{r}
-rr_results |>
-  kable("html", caption = "Unadjusted prevalence ratios for non-susceptibility among isolates from high vs low ADI neighborhoods") |>
-  kable_styling()
+<!--   ) -->
 
-rd_results |>
-  kable("html", caption = "Unadjusted prevalence differences for non-susceptibility among isolates from high vs low ADI neighborhoods") |>
-  kable_styling()
-```
+<!--   for (dataset_name in dataset_list) { -->
 
-```{r}
-prev_by_adi <- df_mdr_prop1 |>
-  mutate(grp = "mdr") |>
-  bind_rows(df_amino_prop1 |> mutate(grp = "amino")) |>
-  bind_rows(df_ceph_prop1 |> mutate(grp = "ceph")) |>
-  bind_rows(df_penbli_prop1 |> mutate(grp = "penbli")) |>
-  bind_rows(df_quin_prop1 |> mutate(grp = "quin")) |>
-  mutate(grp = factor(grp, levels = c("amino", "ceph", "penbli", "quin", "mdr"), labels = c("Aminoglycoside", "Cephalosporin 3rd/4th generation",  "Penicillin + beta-lactamase inhibitor", "Quinolone", "Multdrug-resistant")),
-         mean_prop = mean_prop * 100,
-         lower_ci = lower_ci * 100,
-         upper_ci = upper_ci * 100)
-```
+<!--     # Access the dataset dynamically -->
 
-## Prevalence plot
+<!--     data <- get(dataset_name) -->
 
-```{r}
-chart_prev <- ggplot(data = prev_by_adi, aes(x = grp, y = mean_prop, ymin = lower_ci, ymax = upper_ci, colour = adi_category)) + 
-  geom_point(position = position_dodge(width = 0.6)) +
-  geom_errorbar(width = .3, position = position_dodge(width = 0.6)) +
-  plt_theme +
-  theme(legend.title = element_text(size = 14)) +
-  scale_y_continuous(breaks = seq(0, 30, 10), limits = c(0, 30)) + 
-  scale_x_discrete("", limits = rev,
-                   breaks = c("Aminoglycoside", "Cephalosporin 3rd/4th generation",  "Penicillin + beta-lactamase inhibitor", "Quinolone", "Multdrug-resistant")) +
-  labs(
-    color = "ADI category",
-    y = "Percent nonsusceptible") +
-  scale_colour_grey() +
-  coord_flip()
-chart_prev
-# ggsave(filename = "plots/fig_prev_plot.tiff", plot = chart_prev, device="tiff", dpi=500, width = 8, height = 5)
-```
+<!--     # Fit the modified Poisson model -->
 
-## Prevalence table
+<!--     model <- glm(resistant_to_class ~ adi_category, data = data, family = poisson(link = "log")) -->
 
-```{r}
-prev_by_adi |>
-  select(grp, adi_category, mean_prop, lower_ci, upper_ci) |>
-  kable("html", caption = "Prevalence of non-susceptibility by ADI") |>
-  kable_styling()
-```
+<!--     # Compute robust standard errors -->
+
+<!--     model_results <- coeftest(model, vcov = vcovHC(model, type = "HC0")) -->
+
+<!--     # Extract the second coefficient (adi_categoryHigh vs adi_categoryLow) -->
+
+<!--     term_name <- rownames(model_results)[3] -->
+
+<!--     if (!is.na(term_name) && grepl("adi_category", term_name)) { -->
+
+<!--       estimate <- round(exp(model_results[term_name, "Estimate"]), 2) -->
+
+<!--       stderr <- model_results[term_name, "Std. Error"] -->
+
+<!--       lower <- round(exp(model_results[term_name, "Estimate"] - 1.96 * stderr), 2) -->
+
+<!--       upper <- round(exp(model_results[term_name, "Estimate"] + 1.96 * stderr), 2) -->
+
+<!--       # Append results to the output data frame -->
+
+<!--       results <- rbind(results, data.frame( -->
+
+<!--         dataset = dataset_name, -->
+
+<!--         estimate = estimate, -->
+
+<!--         lower = lower, -->
+
+<!--         upper = upper -->
+
+<!--       )) -->
+
+<!--     } -->
+
+<!--   } -->
+
+<!--   return(results) -->
+
+<!-- } -->
+
+<!-- rr_results <- calculate_rr(dataset_list) -->
+
+<!-- print(rr_results) -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+
+<!-- rr_results |> -->
+
+<!--   kable("html", caption = "Unadjusted prevalence ratios for non-susceptibility among isolates from high vs low ADI neighborhoods") |> -->
+
+<!--   kable_styling() -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+
+<!-- prev_by_adi <- df_mdr_prop1 |> -->
+
+<!--   mutate(grp = "mdr") |> -->
+
+<!--   bind_rows(df_amino_prop1 |> mutate(grp = "amino")) |> -->
+
+<!--   bind_rows(df_ceph_prop1 |> mutate(grp = "ceph")) |> -->
+
+<!--   bind_rows(df_penbli_prop1 |> mutate(grp = "penbli")) |> -->
+
+<!--   bind_rows(df_quin_prop1 |> mutate(grp = "quin")) |> -->
+
+<!--   mutate(grp = factor(grp, levels = c("amino", "ceph", "penbli", "quin", "mdr"), labels = c("Aminoglycoside", "Cephalosporin 3rd/4th generation",  "Penicillin + beta-lactamase inhibitor", "Quinolone", "Multdrug-resistant")), -->
+
+<!--          mean_prop = mean_prop * 100, -->
+
+<!--          lower_ci = lower_ci * 100, -->
+
+<!--          upper_ci = upper_ci * 100) -->
+
+<!-- ``` -->
+
+<!-- ## Prevalence plot -->
+
+<!-- ```{r} -->
+
+<!-- chart_prev <- ggplot(data = prev_by_adi, aes(x = grp, y = mean_prop, ymin = lower_ci, ymax = upper_ci, colour = adi_category)) +  -->
+
+<!--   geom_point(position = position_dodge(width = 0.6)) + -->
+
+<!--   geom_errorbar(width = .3, position = position_dodge(width = 0.6)) + -->
+
+<!--   plt_theme + -->
+
+<!--   theme(legend.title = element_text(size = 14)) + -->
+
+<!--   scale_y_continuous(breaks = seq(0, 30, 10), limits = c(0, 30)) +  -->
+
+<!--   scale_x_discrete("", limits = rev, -->
+
+<!--                    breaks = c("Aminoglycoside", "Cephalosporin 3rd/4th generation",  "Penicillin + beta-lactamase inhibitor", "Quinolone", "Multdrug-resistant")) + -->
+
+<!--   labs( -->
+
+<!--     color = "ADI category", -->
+
+<!--     y = "Percent nonsusceptible") + -->
+
+<!--   scale_colour_grey() + -->
+
+<!--   coord_flip() -->
+
+<!-- chart_prev -->
+
+<!-- # ggsave(filename = "plots/fig_prev_plot.tiff", plot = chart_prev, device="tiff", dpi=500, width = 8, height = 5) -->
+
+<!-- ``` -->
+
+<!-- ## Prevalence table -->
+
+<!-- ```{r} -->
+
+<!-- prev_by_adi |> -->
+
+<!--   select(grp, adi_category, mean_prop, lower_ci, upper_ci) |> -->
+
+<!--   kable("html", caption = "Prevalence of non-susceptibility by ADI") |> -->
+
+<!--   kable_styling() -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+
+<!-- rm(list = ls(pattern = "^chart")) -->
+
+<!-- ``` -->
+
+<!-- # IDWeek abstract -->
+
+<!-- ```{r} -->
+
+<!-- df_abstract <- df_mdr_all |> -->
+
+<!--   filter(culture_year > 2015) -->
+
+<!-- n_distinct(df_abstract$pat_deid) -->
+
+<!-- n_distinct(df_abstract$isolate_id) -->
+
+<!-- df_abstract |> -->
+
+<!--   tabyl(culture_year, mdr, adi_category) |> -->
+
+<!--   adorn_totals(c("row", "col")) |> -->
+
+<!--   adorn_percentages() |> -->
+
+<!--   adorn_pct_formatting() |> -->
+
+<!--   adorn_ns() -->
+
+<!-- summary_table <- df_abstract |> -->
+
+<!--   group_by(culture_year, adi_category) |> -->
+
+<!--   summarise( -->
+
+<!--     n = n(), -->
+
+<!--     n_mdr = sum(mdr), -->
+
+<!--     risk_mdr = round(n_mdr / n * 100,1), -->
+
+<!--     .groups = "drop" -->
+
+<!--   ) -->
+
+<!-- summary_table <- summary_table |> -->
+
+<!--   select(culture_year, adi_category, risk_mdr) |> -->
+
+<!--   tidyr::pivot_wider(names_from = adi_category, values_from = risk_mdr) -->
+
+<!-- summary_table |> -->
+
+<!--   kable("html", caption = "Prevalence of MDR by ADI and year") |> -->
+
+<!--   kable_styling() -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+
+<!-- fit_model_unadjusted <- function(df_year) { -->
+
+<!--   model <- glm(mdr ~ adi_category,  -->
+
+<!--                family = poisson(link = "log"),  -->
+
+<!--                data = df_year) -->
+
+<!--   robust_se <- sandwich::vcovHC(model, type = "HC0") -->
+
+<!--   tidy_model <- broom::tidy(lmtest::coeftest(model, vcov = robust_se)) -->
+
+<!--   tidy_model |> -->
+
+<!--     filter(term == "adi_categoryHigh") %>% -->
+
+<!--     select(term, estimate, std.error, p.value) -->
+
+<!-- } -->
+
+<!-- fit_model_adjusted <- function(df_year) { -->
+
+<!--   model <- glm(mdr ~ adi_category + age_grp + gender + location_type + isolate_sourcef + racef + ethnicityf,  -->
+
+<!--                family = poisson(link = "log"),  -->
+
+<!--                data = df_year) -->
+
+<!--   robust_se <- sandwich::vcovHC(model, type = "HC0") -->
+
+<!--   tidy_model <- broom::tidy(lmtest::coeftest(model, vcov = robust_se)) -->
+
+<!--   tidy_model |> -->
+
+<!--     filter(term == "adi_categoryHigh") %>% -->
+
+<!--     select(term, estimate, std.error, p.value) -->
+
+<!-- } -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+
+<!-- results_unadjusted <- df_abstract |> -->
+
+<!--   group_by(culture_year) |> -->
+
+<!--   group_modify(~ fit_model_unadjusted(.x)) |> -->
+
+<!--   ungroup() |> -->
+
+<!--   mutate( -->
+
+<!--     risk_ratio = round(exp(estimate),2), -->
+
+<!--     lower_ci = round(exp(estimate - 1.96 * std.error),2), -->
+
+<!--     upper_ci = round(exp(estimate + 1.96 * std.error),2), -->
+
+<!--     adjustment = FALSE -->
+
+<!--   ) |> -->
+
+<!--   select(culture_year, risk_ratio, lower_ci, upper_ci, adjustment) -->
+
+<!-- results_unadjusted |> -->
+
+<!--   kable("html", caption = "Risk ratios for MDR by year, high vs low ADI") |> -->
+
+<!--   kable_styling() -->
+
+<!-- results_adjusted <- df_abstract |> -->
+
+<!--   group_by(culture_year) |> -->
+
+<!--   group_modify(~ fit_model_adjusted(.x)) |> -->
+
+<!--   ungroup() |> -->
+
+<!--   mutate( -->
+
+<!--     risk_ratio = round(exp(estimate),2), -->
+
+<!--     lower_ci = round(exp(estimate - 1.96 * std.error),2), -->
+
+<!--     upper_ci = round(exp(estimate + 1.96 * std.error),2), -->
+
+<!--     adjustment = TRUE -->
+
+<!--   ) |> -->
+
+<!--   select(culture_year, risk_ratio, lower_ci, upper_ci, adjustment) -->
+
+<!-- results_adjusted |> -->
+
+<!--   kable("html", caption = "Risk ratios for MDR by year, high vs low ADI") |> -->
+
+<!--   kable_styling() -->
+
+<!-- results <- bind_rows(results_unadjusted, results_adjusted) -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+
+<!-- plt_abstract <- ggplot(results, aes(y = factor(culture_year), x = risk_ratio, colour = adjustment)) + -->
+
+<!--   geom_vline(xintercept = 1, linetype = "dashed", color = "gray50") + -->
+
+<!--   geom_point(position = position_dodge(width = 0.4), size = 3) + -->
+
+<!--   geom_errorbarh(aes(xmin = lower_ci, xmax = upper_ci),  -->
+
+<!--                  height = 0.2,  -->
+
+<!--                  position = position_dodge(width = 0.4)) + -->
+
+<!--   labs( -->
+
+<!--     y = "Culture year", -->
+
+<!--     x = "Prevlence ratio (95% CI)", -->
+
+<!--     colour = NULL -->
+
+<!--   ) + -->
+
+<!--   scale_x_continuous(limits = c(0.5, 2)) + -->
+
+<!--   scale_color_manual( -->
+
+<!--     values = qualitative_hcl(n = length(unique(results$adjustment))), -->
+
+<!--     labels = c(`FALSE` = "Unadjusted", `TRUE` = "Adjusted") -->
+
+<!--   ) + -->
+
+<!--   theme_minimal() + -->
+
+<!--   theme( -->
+
+<!--     axis.title = element_text(size = 14), -->
+
+<!--     axis.text = element_text(size = 14), -->
+
+<!--     legend.position = "inside", legend.position.inside = c(0.98, 0.98), -->
+
+<!--     legend.justification = c("right", "top"), -->
+
+<!--     legend.text = element_text(size = 14, face = "bold")) -->
+
+<!-- plt_abstract -->
+
+<!-- # ggsave(filename = "plots/plt_abstract.png", plot = plt_abstract, device="png", dpi=500, width = 5, height = 5) -->
+
+<!-- ``` -->
